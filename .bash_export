@@ -19,6 +19,7 @@ shopt -s histappend                     # Добавлять в файл ист�
 export EDITOR='vim'
 export PAGER='less'
 export LESS='-R'
+export DOCKER_HOST=unix:///var/run/docker.sock
 
 # --- Настройки локали ---
 export LANG='ru_RU.UTF-8'
@@ -35,18 +36,13 @@ type -f rbenv >/dev/null 2>&1 && eval "$(rbenv init -)"
 type -f pyenv >/dev/null 2>&1 && eval "$(pyenv init -)"
 
 # --- SSH Agent ---
-# Автоматический запуск ssh-agent и добавление ключа
-[ -f ~/.ssh/id_ed25519 ] && [ -f ~/.ssh/id_ed25519.pub ] && {
+# Автоматический запуск ssh-agent и добавление ключей.
+if [ -f ~/.ssh/id_ed25519 ] && [ -f ~/.ssh/id_ed25519.pub ]; then
     export SSH_AUTH_SOCK=~/.ssh/agent
-    # Запустить агент, если он еще не запущен
-    pgrep -f $SSH_AUTH_SOCK >/dev/null || {
-        rm -f $SSH_AUTH_SOCK
-        ssh-agent -a $SSH_AUTH_SOCK &>/dev/null
-    }
-    # Добавить ключ, если он еще не добавлен
-    ssh-add -L | grep -q "$(cut -f1,2 -d' ' ~/.ssh/id_ed25519.pub)" || ssh-add
-}
-
-# --- Docker ---
-export DOCKER_HOST=unix:///var/run/docker.sock
-
+    if ! pgrep -f "$SSH_AUTH_SOCK" >/dev/null; then
+        rm -f "$SSH_AUTH_SOCK"
+        ssh-agent -a "$SSH_AUTH_SOCK" &>/dev/null
+    fi
+    # Добавляем ключ, только если он еще не добавлен.
+    ssh-add -l | grep -q "$(cut -f1,2 -d' ' ~/.ssh/id_ed25519.pub)" || ssh-add ~/.ssh/id_ed25519
+fi
