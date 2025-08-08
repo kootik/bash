@@ -16,7 +16,7 @@ HISTIGNORE="ls:bg:fg:history"           # Не сохранять эти ком�
 shopt -s histappend                     # Добавлять в файл истории, а не перезаписывать его
 
 # --- Редакторы и пейджеры ---
-export EDITOR='vim'
+export EDITOR='nano'
 export PAGER='less'
 export LESS='-R'
 export DOCKER_HOST=unix:///var/run/docker.sock
