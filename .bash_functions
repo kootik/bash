@@ -304,6 +304,47 @@ duh() {
     fi
 }
 
+# ИСПРАВЛЕНО: Сложная логика вынесена из alias в функцию для читаемости
+# Предоставляет краткую сводку о системе: ОС, память, диск, процессор и сеть.
+sysinfo() {
+    # Секция ОС
+    (
+        # Загружаем данные из /etc/os-release, если файл существует
+        . /etc/os-release 2>/dev/null
+        echo -e "\n\e[1;32mОПЕРАЦИОННАЯ СИСТЕМА\e[0m"
+        echo "  ОС:           ${PRETTY_NAME:-$(uname -s)}"
+        echo "  Ядро:         $(uname -r)"
+        echo "  Архитектура:  $(uname -m)"
+        echo "  Время работы: $(uptime -p | sed "s/up //")"
+        echo ""
+    )
+
+    # Секция ресурсов
+    echo -e "\e[1;32mРЕСУРСЫ\e[0m"
+    free -h
+    echo ""
+    df -h /
+    echo ""
+
+    # Секция процессора
+    echo -e "\e[1;32mПРОЦЕССОР\e[0m"
+    lscpu | grep -E "Model name|CPU\(s\)|Vendor ID|Socket\(s\)"
+    echo ""
+
+    # Секция сети
+    echo -e "\e[1;32mСЕТЬ\e[0m"
+    echo -e "  Имя хоста:    $(hostname)"
+    echo "  IP-адреса:"
+    # Используем ip -br a для краткого вывода, если доступно
+    if command -v ip &> /dev/null; then
+        ip -br a | awk '{printf "    %-15s %s\n", $1, $3}'
+    else
+        # Резервный вариант для систем без `ip`
+        ifconfig | grep "inet " | awk '{print "    " $2}'
+    fi
+    echo ""
+}
+
 # -- Раздел 3: Сеть и сеанс --
 
 # Выполняет DNS-запрос для указанного типа записи (A, MX, TXT, etc.).
