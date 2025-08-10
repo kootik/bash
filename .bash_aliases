@@ -76,7 +76,6 @@ alias pscpu='ps auxf | sort -nr -k 3 | head -10' # Выводит 10 самых 
 
 # -- Системная информация --
 alias unamea='uname -a'         # Выводит всю доступную информацию о системе (ядро, имя хоста, архитектура).
-alias sysinfo='( . /etc/os-release 2>/dev/null; echo -e "\n\e[1;32mОПЕРАЦИОННАЯ СИСТЕМА\e[0m\n  ОС:           $PRETTY_NAME\n  Ядро:         $(uname -r)\n  Архитектура:  $(uname -m)\n  Время работы: $(uptime -p | sed "s/up //")\n" ); echo -e "\e[1;32mРЕСУРСЫ\e[0m"; free -h; echo ""; df -h /; echo -e "\n\e[1;32mПРОЦЕССОР\e[0m"; lscpu | grep -E "Model name|CPU\(s\)|Vendor ID|Socket\(s\)"; echo -e "\n\e[1;32mСЕТЬ\e[0m"; echo -e "  Имя хоста:    $(hostname)"; echo "  IP-адреса:"; ip -br a | awk '\''{printf "    %-15s %s\n", $1, $3}'\'' ' # Предоставляет краткую сводку о системе: память, диск и процессор.
 # Системные журналы (journalctl)
 
 alias jnl='journalctl'                      # Показать все журналы
