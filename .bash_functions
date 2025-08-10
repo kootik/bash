@@ -214,6 +214,17 @@ zipf() {
     echo "Создание архива: $output_name"
     zip -r "$output_name" "$target_name" -x "*.git*" "*.DS_Store*" "__MACOSX*"
 }
+# Поиск текста в файлах рекурсивно.
+# Пример: fsearch "error" ./*.log
+fsearch() {
+    if [ $# -lt 2 ]; then
+        echo "Использование: fsearch <текст> <файлы/директории>" >&2
+        return 1
+    fi
+    local text="$1"
+    shift
+    grep -rnw "$@" -e "$text"
+
 # --- Сетевые утилиты ---
 # Выполняет DNS-запрос через Google DNS-over-HTTPS.
 # Пример: doh google.com
@@ -257,8 +268,14 @@ killg() {
         return 0
     fi
 
-    echo "Не удалось завершить от имени текущего пользователя. Повышение прав до sudo..."
-    sudo pkill -fi -9 "$1" &>/dev/null
+    read -p "Не удалось завершить от имени текущего пользователя. Использовать sudo? (y/n): " confirm
+    if [[ $confirm != [yY] ]]; then
+        echo "Операция отменена."
+        return 1
+    fi
+
+    echo "Повышение прав до sudo..."
+    sudo pkill -f -i -9 "$1" &>/dev/null
 
     if ! pgrep -fi "$1" > /dev/null; then
         echo "Процессы успешно завершены с правами sudo."
@@ -305,53 +322,36 @@ duh() {
 # Пример: h-func
 h-func() {
     echo -e "\n\e[1;32mПОЛЬЗОВАТЕЛЬСКИЕ ФУНКЦИИ (подсказка)\e[0m"
-    
-    # ИСПРАВЛЕНО: Эта версия сначала структурирует данные, потом сортирует, потом форматирует.
-    # Это решает проблему с неправильным порядком вывода.
     awk '
-        # Если строка является комментарием...
         /^#/ {
-            # ...и мы еще не сохранили первый комментарий, сохраняем его.
             if (comment1 == "") {
                 comment1 = $0;
                 sub(/^#\s*/, "", comment1);
             } else {
-                # ...иначе, сохраняем как второй комментарий.
                 comment2 = $0;
                 sub(/^#\s*/, "", comment2);
             }
             next;
         }
-        # Если строка является определением функции...
         /^[a-zA-Z0-9_-]+\(\)/ {
             func_name = $0;
             sub(/\(\).*/, "", func_name);
-
-            # Выводим данные, разделенные табуляцией, для последующей сортировки
             print func_name "\t" comment1 "\t" comment2;
-
-            # Сбрасываем комментарии для следующей функции.
             comment1 = "";
             comment2 = "";
         }
-        # Если строка пустая, сбрасываем комментарии.
         /^$/ {
             comment1 = "";
             comment2 = "";
         }
     ' "$HOME/.bash_functions" | \
-    grep -vE '^sshb|^update_eternal_history' | \
     sort -f | \
     awk -F'\t' '{
-        # Печатаем имя функции и первый комментарий.
         printf "  \033[1;33m%-18s\033[0m - %s\n", $1, $2;
-
-        # Если есть второй комментарий (пример), печатаем его.
         if ($3 != "") {
             printf "  %-18s  \033[2m%s\033[0m\n", "", $3;
         }
     }'
-    
     echo ""
 }
 
@@ -359,48 +359,30 @@ h-func() {
 # Пример: h-alias
 h-alias() {
     echo -e "\n\e[1;32mПОЛЬЗОВАТЕЛЬСКИЕ ПСЕВДОНИМЫ (подсказка)\e[0m"
-    
-    # ИСПРАВЛЕНО: Улучшен парсинг заголовков для избежания конфликтов.
     awk '
-        # Находим заголовки разделов, которые начинаются с "# --" и заканчиваются на "--"
         /^# --.*--$/ {
             title = $0;
-            # Удаляем только обрамляющие символы, а не все вхождения "--"
             sub(/^# -- /, "", title);
             sub(/ --$/, "", title);
             printf "\n\033[1;34m%s\033[0m\n", title;
             next;
         }
-
-        # Находим строки с псевдонимами, игнорируя пробелы в начале
         /^\s*alias/ {
-            # Копируем строку для безопасной обработки
             line = $0;
-            
-            # Сначала извлекаем комментарий
             comment = "Нет описания";
             if (match(line, /#.*/)) {
                 comment = substr(line, RSTART + 1);
                 sub(/^\s*/, "", comment);
-                # Удаляем комментарий из строки, чтобы он не мешал
                 sub(/\s*#.*/, "", line);
             }
-            
-            # Теперь извлекаем имя псевдонима из очищенной строки
-            # Удаляем "alias " и пробелы в начале
             sub(/^\s*alias\s*/, "", line);
-            # Все, что осталось до первого знака "=", является именем
             sub(/\s*=.*/, "", line);
             alias_name = line;
-            
-            # Выводим результат
             printf "  \033[1;33m%-18s\033[0m - %s\n", alias_name, comment;
         }
     ' "$HOME/.bash_aliases"
-    
     echo ""
 }
-
 
 # Предоставляет краткую сводку о системе.
 # Пример: sysinfo
@@ -420,7 +402,7 @@ sysinfo() {
     echo -e "\e[1;32mРЕСУРСЫ\e[0m"
     free -h
     echo ""
-    df -h /
+    df -h 
     echo ""
 
     # Секция процессора
@@ -434,12 +416,20 @@ sysinfo() {
     echo "  IP-адреса:"
     if command -v ip &> /dev/null; then
         ip -br a | awk '{printf "    %-15s %s\n", $1, $3}'
-    else
+    elif command -v ifconfig &> /dev/null; then  # Fallback для старых систем или macOS
         ifconfig | grep "inet " | awk '{print "    " $2}'
+    else
+        echo "    Не удалось получить IP (установите ip или ifconfig)."
     fi
     echo ""
 }
 
+# Показ топ процессов по CPU.
+# Пример: topcpu 5
+topcpu() {
+    local num="${1:-10}"
+    ps aux --sort=-%cpu | head -n "$((num + 1))"
+}
 
 # -- Раздел 3: Сеть и сеанс --
 
@@ -489,7 +479,6 @@ jnl-unit() {
         echo "Использование: jnl-unit <имя_юнита>" >&2
         return 1
     fi
-    # ИЗМЕНЕНО: Добавлена команда sudo для выполнения с правами root
     sudo journalctl -u "$1" -f --no-pager
 }
 
@@ -557,11 +546,22 @@ mkvenv() {
     echo "Окружение '$1' создано и активировано."
 }
 
+# Генератор случайных паролей.
+# Пример: genpass 16
+genpass() {
+    local length="${1:-12}"
+    tr -dc 'A-Za-z0-9!@#$%^&*()_+' < /dev/urandom | head -c "$length"
+    echo
+}
 # -- Раздел 5: Утилиты --
 
 # Загружает файл или каталог на transfer.sh и возвращает ссылку.
 # Пример: transfer report.pdf
 transfer() {
+    if ! command -v curl &>/dev/null; then
+        echo "Ошибка: 'curl' не найден." >&2
+        return 1
+    fi
     if [ $# -eq 0 ]; then
         echo "Использование: transfer <файл|каталог> или cat <файл> | transfer <имя_файла>" >&2
         return 1
@@ -575,8 +575,12 @@ transfer() {
             return 1
         fi
         if [ -d "$file" ]; then
-            (cd "$(dirname "$file")" && zip -r -q - "$(basename "$file")") |
-            curl --progress-bar --upload-file "-" "https://transfer.sh/${file_name}.zip"
+            # ИСПРАВЛЕНО: Создаем временный zip-файл для чистоты
+            local temp_zip
+            temp_zip=$(mktemp -u).zip
+            (cd "$(dirname "$file")" && zip -r -q "$temp_zip" "$(basename "$file")")
+            curl --progress-bar --upload-file "$temp_zip" "https://transfer.sh/${file_name}.zip"
+            rm -f "$temp_zip"
         else
             cat "$file" |
             curl --progress-bar --upload-file "-" "https://transfer.sh/$file_name"
@@ -650,9 +654,9 @@ setup_os_aliases() {
     fi
 }
 
-# ==============================================================================
-#   РАЗДЕЛ 5: ИНТЕРАКТИВНЫЕ ФУНКЦИИ GIT С ИСПОЛЬЗОВАНИЕМ FZF
-# ==============================================================================
+
+#   РАЗДЕЛ 6: ИНТЕРАКТИВНЫЕ ФУНКЦИИ GIT С ИСПОЛЬЗОВАНИЕМ FZF
+
 
 # Интерактивно переключиться на другую ветку Git.
 # Пример: Начните вводить имя ветки для поиска и нажмите Enter.
@@ -660,8 +664,9 @@ gfb() {
     if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
     local branches branch
     branches=$(git for-each-ref --count=30 --sort=-committerdate refs/heads/ --format="%(refname:short)") &&
+    # ИСПРАВЛЕНО: Убран некорректный разделитель -d '\t'
     branch=$(echo "$branches" |
-        fzf -d '\t' --preview 'git log --color=always --oneline -n 15 {1}' --reverse) &&
+        fzf --preview 'git log --color=always --oneline -n 15 {1}' --reverse) &&
     git checkout "$(echo "$branch" | sed "s/.* //")"
 }
 
@@ -717,9 +722,9 @@ gfd() {
     fi
 }
 
-# ==============================================================================
-#   РАЗДЕЛ 6: ПРОЧИЕ УТИЛИТЫ
-# ==============================================================================
+# 
+#   РАЗДЕЛ 7: ПРОЧИЕ УТИЛИТЫ
+
 
 # Переходит вверх по иерархии каталогов.
 # Пример: up 3
@@ -740,4 +745,29 @@ calc() {
         return 1
     fi
     echo "scale=10; $1" | bc -l | sed -E 's/([.0-9]*[1-9])0+$|\.0+$/\1/'
+}
+
+# Быстрое резервное копирование домашней директории.
+# Пример: backup_home /path/to/backup.tar.gz
+backup_home() {
+    local output="${1:-$HOME/backup_$(date +%F).tar.gz}"
+    echo "Создание резервной копии в $output..."
+    tar -czvf "$output" --exclude="$HOME/.cache" --exclude="$HOME/Downloads" --exclude="$output" "$HOME"
+    echo "Резервная копия успешно создана."
+}
+
+
+#   РАЗДЕЛ 8: УТИЛИТЫ ДЛЯ МОНИТОРИНГА
+
+
+# Мониторинг изменений в файле с помощью указанной команды.
+# Пример: wfile /var/log/syslog tail
+wfile() {
+    if [ $# -lt 2 ]; then
+        echo "Использование: wfile <файл> <команда_для_запуска>" >&2
+        return 1
+    fi
+    local file="$1"
+    shift
+    watch -n 1 -d -- "$@" "$file"
 }
