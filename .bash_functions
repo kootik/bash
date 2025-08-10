@@ -224,7 +224,7 @@ fsearch() {
     local text="$1"
     shift
     grep -rnw "$@" -e "$text"
-
+}
 # --- Сетевые утилиты ---
 # Выполняет DNS-запрос через Google DNS-over-HTTPS.
 # Пример: doh google.com
