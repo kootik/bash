@@ -555,6 +555,18 @@ genpass() {
 }
 # -- Раздел 5: Утилиты --
 
+# Ищет запущенные процессы по имени, исключая сам процесс поиска.
+# Пример: psg "nginx|php-fpm"
+psg() {
+  ps aux | grep -v grep | grep -i --color=auto "$@"
+}
+
+# Ищет в истории команд по заданному шаблону.
+# Пример: hg "docker ps"
+hg() {
+  history | grep --color=auto "$@"
+}
+
 # Загружает файл или каталог на transfer.sh и возвращает ссылку.
 # Пример: transfer report.pdf
 transfer() {
