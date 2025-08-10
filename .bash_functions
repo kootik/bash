@@ -142,16 +142,19 @@ fd() {
 # Требует утилиты trash-cli (например, sudo apt install trash-cli)
 # Использование: trash file.txt folder/
 trash() {
-    if ! command -v trash-put &> /dev/null; then
-        echo "Команда 'trash-put' не найдена. Установите 'trash-cli'." >&2
-        return 1
+    # Если trash-cli установлен, используем его
+    if command -v trash-put &> /dev/null; then
+        trash-put "$@"
+        return
     fi
-    if [ $# -eq 0 ]; then
-        echo "Использование: trash <файл/каталог> [...]" >&2
-        return 1
-    fi
-    trash-put "$@"
+
+    # Запасной механизм
+    local trash_dir="$HOME/.Trash"
+    mkdir -p "$trash_dir"
+    echo "Предупреждение: 'trash-put' не найден. Файлы будут перемещены в '$trash_dir'." >&2
+    mv -v "$@" "$trash_dir"
 }
+
 # Универсальная функция для извлечения файлов из архивов.
 # Пример: extract archive.zip backup.tar.gz
 extract() {
@@ -223,7 +226,7 @@ fsearch() {
     fi
     local text="$1"
     shift
-    grep -rnw "$@" -e "$text"
+    grep -rnwE "$@" -e "$text"
 }
 # --- Сетевые утилиты ---
 # Выполняет DNS-запрос через Google DNS-over-HTTPS.
@@ -502,6 +505,19 @@ gnewbranch() {
     git checkout -b "$1" && git push -u origin "$1"
 }
 
+# Интерактивный rebase на выбранный коммит из лога.
+# Пример: gfr
+gfr() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+
+    local commit
+    commit=$(git log --oneline --color=always | fzf --ansi --preview 'git show --color=always {+1}' | awk '{print $1}')
+
+    if [ -n "$commit" ]; then
+        git rebase -i "$commit"
+    fi
+}
+
 # Удаляет локальные ветки, которые уже были слиты в основную ветку.
 # Пример: gprune
 gprune() {
@@ -759,12 +775,21 @@ calc() {
     echo "scale=10; $1" | bc -l | sed -E 's/([.0-9]*[1-9])0+$|\.0+$/\1/'
 }
 
-# Быстрое резервное копирование домашней директории.
+# Быстрое резервное копирование домашней директории с исключением файла бекапа и загрузок.
 # Пример: backup_home /path/to/backup.tar.gz
 backup_home() {
     local output="${1:-$HOME/backup_$(date +%F).tar.gz}"
     echo "Создание резервной копии в $output..."
-    tar -czvf "$output" --exclude="$HOME/.cache" --exclude="$HOME/Downloads" --exclude="$output" "$HOME"
+    tar -czvf "$output" \
+        --exclude="$HOME/.cache" \
+        --exclude="$HOME/Downloads" \
+        --exclude="$HOME/.npm" \
+        --exclude="$HOME/.rustup" \
+        --exclude="$HOME/.local/share/Trash" \
+        --exclude="*/node_modules" \
+        --exclude="*/target" \
+        --exclude="$output" \
+        "$HOME"
     echo "Резервная копия успешно создана."
 }
 
@@ -782,4 +807,430 @@ wfile() {
     local file="$1"
     shift
     watch -n 1 -d -- "$@" "$file"
+}
+# Интерактивно переключить текущее пространство имен (namespace).
+# Пример: kns (появится список для выбора)
+kns() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    local ns
+    ns=$(kubectl get ns -o name | sed 's/namespace\///' | fzf --height 40% --reverse --prompt="Выберите Namespace: ")
+    if [[ -n "$ns" ]]; then
+        kubectl config set-context --current --namespace="$ns"
+    fi
+}
+
+# Интерактивно переключить текущий контекст (кластер).
+# Пример: kctx (появится список для выбора)
+kctx() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    local ctx
+    ctx=$(kubectl config get-contexts -o name | fzf --height 40% --reverse --prompt="Выберите Контекст: ")
+    if [[ -n "$ctx" ]]; then
+        kubectl config use-context "$ctx"
+    fi
+}
+
+# Декодировать секрет Kubernetes из Base64.
+# Пример: kdecode my-secret db-password
+kdecode() {
+    if [ $# -lt 1 ]; then
+        echo "Использование: kdecode <имя_секрета> [ключ]" >&2
+        return 1
+    fi
+    local secret_name="$1"
+    local key="$2"
+    if [ -n "$key" ]; then
+        kubectl get secret "$secret_name" -o "jsonpath={.data.$key}" | base64 --decode
+        echo # Добавляем перенос строки для чистоты вывода
+    else
+        # Если ключ не указан, декодируем все поля секрета
+        kubectl get secret "$secret_name" -o json | jq -r '.data | to_entries[] | "\(.key): \(.value | @base64d)"'
+    fi
+}
+
+# Проверить SSL-сертификат домена: кем выдан, кому и срок действия.
+# Пример: check_ssl google.com
+check_ssl() {
+    local domain="${1}"
+    if [ -z "$domain" ]; then
+        echo "Использование: check_ssl <домен>" >&2
+        return 1
+    fi
+    echo "Проверка сертификата для ${domain}..."
+    # -servername нужен для SNI (Server Name Indication)
+    echo | openssl s_client -servername "${domain}" -connect "${domain}:443" 2>/dev/null | openssl x509 -noout -text | grep -E "Issuer:|Subject:|Not Before|Not After"
+}
+
+# Быстро декодировать токен JWT (полезно для API и аутентификации).
+# Пример: jwtdec <длинный_токен_jwt>
+jwtdec() {
+    if [ -z "$1" ]; then
+        echo "Использование: jwtdec <токен>" >&2
+        return 1
+    fi
+    # Используем jq для красивого вывода, если он есть
+    local jq_cmd="cat"
+    if command -v jq &>/dev/null; then
+        jq_cmd="jq ."
+    fi
+    {
+        echo -e "\n\033[1;34m--- HEADER ---\033[0m"
+        echo "$1" | cut -d'.' -f1 | base64 --decode 2>/dev/null | $jq_cmd
+        echo -e "\n\033[1;34m--- PAYLOAD ---\033[0m"
+        echo "$1" | cut -d'.' -f2 | base64 --decode 2>/dev/null | $jq_cmd
+        echo
+    }
+}
+
+
+# Интерактивно "запрыгнуть" в работающий Docker-контейнер.
+# Пример: d_dive (появится список контейнеров для выбора)
+d_dive() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    local container
+    container=$(docker ps --format "{{.ID}}\t{{.Names}}\t{{.Image}}" | fzf --height 40% --reverse --header "Выберите контейнер:")
+    if [[ -n "$container" ]]; then
+        local container_id
+        container_id=$(echo "$container" | awk '{print $1}')
+        # Пытаемся запустить bash, если не получается - sh (для Alpine-контейнеров)
+        echo "Подключение к контейнеру $container_id..."
+        docker exec -it "$container_id" bash || docker exec -it "$container_id" sh
+    fi
+}
+
+# Показать логи контейнера с возможностью слежения (follow).
+# Пример: dlogs (выбрать контейнер), dlogs -f (выбрать и следить)
+dlogs() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    local container
+    container=$(docker ps -a --format "{{.ID}}\t{{.Names}}\t{{.Image}}" | fzf --height 40% --reverse --header "Выберите контейнер для просмотра логов:")
+    if [[ -n "$container" ]]; then
+        local container_id
+        container_id=$(echo "$container" | awk '{print $1}')
+        docker logs "$@" "$container_id"
+    fi
+}
+
+# Интерактивно переключиться на другой Terraform workspace.
+# Требует: terraform, fzf
+# Пример: tfswitch (появится список для выбора)
+tfswitch() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    
+    # Проверяем, инициализирован ли проект
+    if [ ! -d ".terraform" ]; then
+        echo "Ошибка: Каталог .terraform не найден. Выполните 'terraform init' сначала." >&2
+        return 1
+    fi
+    
+    local workspace
+    workspace=$(terraform workspace list | sed 's/\*//g' | fzf --height 20% --reverse --prompt="Выберите workspace: ")
+    
+    if [[ -n "$workspace" ]]; then
+        terraform workspace select "${workspace// /}" # Удаляем пробелы, которые оставляет sed
+    fi
+}
+
+# Синхронизировать форк с оригинальным (upstream) репозиторием.
+# Предполагается, что у вас уже добавлен remote с именем 'upstream'.
+# Пример: gsync
+gsync() {
+    # Проверяем, существует ли remote 'upstream'
+    if ! git remote -v | grep -q "^upstream"; then
+        echo "Ошибка: remote с именем 'upstream' не найден." >&2
+        echo "Добавьте его: git remote add upstream <URL_оригинального_репозитория>"
+        return 1
+    fi
+
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+    local main_branch="main" # Или 'master', если используется он
+
+    echo "Переключение на ветку '${main_branch}'..."
+    git checkout "$main_branch"
+    
+    echo "Получение изменений из 'upstream'..."
+    git fetch upstream
+    
+    echo "Слияние 'upstream/${main_branch}' в локальную '${main_branch}'..."
+    git merge "upstream/${main_branch}"
+    
+    echo "Возврат на исходную ветку '${current_branch}'..."
+    git checkout "$current_branch"
+    
+    echo "Синхронизация завершена. Теперь вы можете сделать 'git rebase ${main_branch}' в ваших feature-ветках."
+}
+
+# Создать дамп базы данных PostgreSQL, выбирая ее интерактивно.
+# Требует: pg_dump, psql, fzf
+# Пример: pg_backup
+# Пример с указанием пользователя: pg_backup myuser
+pg_backup() {
+    # 1. Проверка зависимостей
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    if ! command -v psql &>/dev/null; then echo "Ошибка: psql (клиент PostgreSQL) не найден." >&2; return 1; fi
+
+    local db_user="${1:-postgres}" # Пользователь по умолчанию - postgres, можно передать как аргумент.
+    
+    # 2. Получение списка баз данных
+    #    - psql -l -t: получить список баз в "чистом" виде
+    #    - cut -d'|' -f1: взять только первый столбец (имя)
+    #    - sed 's/ //g': убрать лишние пробелы
+    #    - grep -vE '...': исключить системные и шаблонные базы
+    local db_list
+    db_list=$(psql -l -t -U "$db_user" 2>/dev/null | cut -d'|' -f1 | sed 's/ //g' | grep -vE '^(template[01]|postgres)$' | grep -v '^$')
+
+    if [ -z "$db_list" ]; then
+        echo "Не удалось получить список баз данных или нет доступных баз для бэкапа." >&2
+        echo "Возможно, нужно указать правильного пользователя, например: pg_backup my_db_user" >&2
+        return 1
+    fi
+
+    # 3. Интерактивный выбор с помощью fzf
+    local db_name
+    db_name=$(echo "$db_list" | fzf --height 30% --reverse --prompt="Выберите базу данных для бэкапа: ")
+
+    # Если пользователь нажал Esc, выходим
+    if [ -z "$db_name" ]; then
+        echo "Операция отменена."
+        return 0
+    fi
+    
+    # 4. Создание дампа
+    local file_name="${db_name}_$(date +%F_%H-%M-%S).sql.gz"
+    
+    echo "Создание дампа базы '${db_name}' (пользователь: ${db_user}) в файл '${file_name}'..."
+    pg_dump -Fc -Z 9 -U "${db_user}" "${db_name}" > "${file_name}"
+    
+    if [ $? -eq 0 ]; then
+        echo "Дамп успешно создан: ${file_name}"
+    else
+        echo "Ошибка при создании дампа." >&2
+        rm -f "${file_name}" # Удаляем пустой файл в случае ошибки
+    fi
+}
+
+# Интерактивно "убить" один или несколько процессов.
+# Требует: fzf
+# Пример: fkill (появится список процессов для выбора)
+fkill() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    
+    # Получаем PID выбранных процессов
+    local pids
+    pids=$(ps -ef | sed 1d | fzf -m --height 50% --reverse --header="Выберите процессы для завершения (Tab для выбора, Enter для подтверждения)")
+    
+    if [ -z "$pids" ]; then
+        echo "Операция отменена."
+        return 0
+    fi
+    
+    # Извлекаем только вторую колонку (PID)
+    local pids_to_kill
+    pids_to_kill=$(echo "$pids" | awk '{print $2}')
+    
+    echo "Выбраны PID: ${pids_to_kill}"
+    read -p "Какой сигнал отправить? (15=TERM, 9=KILL) [15]: " signal
+    signal=${signal:-15} # По умолчанию SIGTERM
+    
+    echo "$pids_to_kill" | xargs -r kill -"${signal}"
+    echo "Команда kill с сигналом ${signal} отправлена."
+}
+
+# Интерактивное управление службами systemd.
+# Требует: fzf, systemctl
+# Пример: svc (выбрать службу, затем действие)
+svc() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    
+    local unit
+    unit=$(systemctl list-units --all --type=service --no-pager --plain | awk '{print $1}' | sed 1d | fzf --height 50% --reverse --prompt="Выберите службу: ")
+    
+    if [ -z "$unit" ]; then
+        echo "Операция отменена."
+        return 0
+    fi
+    
+    read -p "Действие для '${unit}': (s)tatus, (r)estart, st(o)p, st(a)rt [s]: " action
+    action=${action:-s}
+    
+    case "$action" in
+        s) sudo systemctl status "$unit" ;;
+        r) sudo systemctl restart "$unit" ;;
+        o) sudo systemctl stop "$unit" ;;
+        a) sudo systemctl start "$unit" ;;
+        *) echo "Неверное действие." >&2 ;;
+    esac
+}
+
+
+# Интерактивное управление "спрятанными" изменениями (git stash).
+# Требует: fzf
+# Пример: gfs (выбрать stash, затем действие)
+gfs() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    
+    local stash
+    stash=$(git stash list | fzf --height 40% --reverse --prompt="Выберите stash: " --preview="git show --color=always {1}")
+    
+    if [ -z "$stash" ]; then
+        echo "Операция отменена."
+        return 0
+    fi
+    
+    local stash_ref
+    stash_ref=$(echo "$stash" | awk -F: '{print $1}')
+    
+    read -p "Действие для '${stash_ref}': (a)pply, (p)op, (d)rop [a]: " action
+    action=${action:-a}
+    
+    case "$action" in
+        a) git stash apply "$stash_ref" ;;
+        p) git stash pop "$stash_ref" ;;
+        d) git stash drop "$stash_ref" ;;
+        *) echo "Неверное действие." >&2 ;;
+    esac
+}
+
+# Интерактивно выбрать коммиты из другой ветки для cherry-pick.
+# Требует: fzf
+# Пример: gfc_pick (выбрать ветку, затем коммиты)
+gfc_pick() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    
+    # Сначала выбираем ветку, из которой будем брать коммиты
+    local target_branch
+    target_branch=$(git branch --all | fzf --height 30% --reverse --prompt="Выберите ветку-источник: ")
+    
+    if [ -z "$target_branch" ]; then
+        echo "Операция отменена."
+        return 0
+    fi
+    
+    # Затем выбираем коммиты из этой ветки
+    local commits
+    commits=$(git log "$target_branch" --oneline --color=always | fzf -m --height 50% --reverse --ansi --prompt="Выберите коммиты для cherry-pick: " --preview="git show --color=always {+1}")
+    
+    if [ -n "$commits" ]; then
+        local commit_hashes
+        commit_hashes=$(echo "$commits" | awk '{print $1}' | tac) # tac, чтобы применить в правильном порядке
+        echo "Выполняется cherry-pick для коммитов:"
+        echo "$commit_hashes"
+        git cherry-pick $commit_hashes
+    fi
+}
+
+# Интерактивное подключение к хосту из ~/.ssh/config.
+# Требует: fzf
+# Пример: sshm
+sshm() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    
+    # Ищем все записи "Host", которые не содержат '*'
+    local host
+    host=$(grep -E "^\s*Host\s+" ~/.ssh/config | grep -v '*' | awk '{print $2}' | fzf --height 30% --reverse --prompt="Выберите хост SSH: ")
+    
+    if [ -n "$host" ]; then
+        echo "Подключение к ${host}..."
+        ssh "$host"
+    fi
+}
+
+
+# Интерактивный поиск по содержимому файлов с помощью ripgrep и fzf.
+# rg уважает .gitignore и работает очень быстро.
+# Требует: fzf, ripgrep (rg), bat (опционально, для красивого предпросмотра)
+# Пример: frg "MyApi.Component"
+frg() {
+    if ! command -v rg &>/dev/null; then echo "Ошибка: ripgrep (rg) не найден." >&2; return 1; fi
+    
+    local preview_cmd="cat {}"
+    if command -v bat &>/dev/null; then
+        preview_cmd="bat --color=always --highlight-line {2} {1}"
+    fi
+
+    rg --color=always --line-number --no-heading "$1" |
+      fzf --ansi \
+          --delimiter ':' \
+          --preview-window 'up,60%,border-bottom' \
+          --preview "$preview_cmd" \
+          --bind "enter:execute(echo {1}:{2} | xargs -I % sh -c '\${EDITOR:-nano} +{2} {1}')"
+}
+
+# Найти все комментарии TODO, FIXME, NOTE в проекте.
+# Требует: fzf, ripgrep (rg)
+# Пример: ftodo
+ftodo() {
+    if ! command -v rg &>/dev/null; then echo "Ошибка: ripgrep (rg) не найден." >&2; return 1; fi
+    
+    rg --line-number --no-heading --color=always -e "(TODO|FIXME|NOTE|HACK):" |
+      fzf --ansi \
+          --delimiter ':' \
+          --preview 'bat --color=always --highlight-line {2} {1}' \
+          --preview-window 'up,60%,border-bottom'
+}
+
+# Интерактивно переключиться на Pull Request из GitHub.
+# Требует: fzf, gh (GitHub CLI)
+# Пример: fpr
+fpr() {
+    if ! command -v gh &>/dev/null; then echo "Ошибка: GitHub CLI (gh) не найден." >&2; return 1; fi
+    
+    local pr
+    pr=$(gh pr list | fzf --height 40% --reverse --header="Выберите Pull Request:")
+    
+    if [[ -n "$pr" ]]; then
+        local pr_number
+        pr_number=$(echo "$pr" | awk '{print $1}')
+        gh pr checkout "$pr_number"
+    fi
+}
+
+# Интерактивно просмотреть открытые порты и связанные с ними процессы.
+# Требует: fzf, ss (из iproute2)
+# Пример: fports
+fports() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    
+    local port_info
+    port_info=$(sudo ss -tulanp | fzf --height 50% --reverse --header="Выберите соединение для просмотра деталей:")
+    
+    if [[ -n "$port_info" ]]; then
+        local pid
+        # Извлекаем PID из сложной строки ss
+        pid=$(echo "$port_info" | grep -oP 'pid=\K\d+')
+        
+        if [[ -n "$pid" ]]; then
+            echo -e "\n\033[1;34m--- Информация о процессе (PID: ${pid}) ---\033[0m"
+            ps -o user,pid,ppid,%cpu,%mem,start,etime,cmd -p "$pid"
+            
+            read -p "Завершить этот процесс? (y/n): " confirm
+            if [[ $confirm == [yY] ]]; then
+                sudo kill -9 "$pid"
+                echo "Процесс ${pid} завершен."
+            fi
+        else
+            echo "Не удалось определить PID для этого соединения."
+        fi
+    fi
+}
+
+# Интерактивный переход в подкаталог.
+# Требует: fzf, find (или fd-find для большей скорости)
+# Пример: fcd
+fcd() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    
+    local find_cmd="find . -type d"
+    # Если установлена утилита fd, используем ее, так как она быстрее и уважает .gitignore
+    if command -v fd &>/dev/null; then
+        find_cmd="fd --type d"
+    fi
+    
+    local dir
+    dir=$($find_cmd | fzf --height 50% --reverse --prompt="Перейти в: ")
+    
+    if [[ -n "$dir" ]]; then
+        cd "$dir"
+    fi
 }
