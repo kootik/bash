@@ -8,7 +8,6 @@
 
 # Сохраняет расширенную историю команд.
 update_eternal_history() {
-    # ИСПРАВЛЕНО: Все переменные объявлены как local для безопасности.
     local histfile_size
     histfile_size=$(stat -c %s "$HISTFILE" 2>/dev/null || echo 0)
     local history_line
@@ -16,18 +15,15 @@ update_eternal_history() {
     local old_umask
 
     history -a
-    # Проверяем, изменился ли файл истории, чтобы избежать лишних записей.
     ((histfile_size == $(stat -c %s "$HISTFILE" 2>/dev/null || echo 0))) && return
 
     history_line="${USER}\t${HOSTNAME}\t${PWD}\t$(history 1)"
     history_sink=$(readlink ~/.bash-ssh.history 2>/dev/null)
 
-    # Если есть удаленный приемник истории (созданный sshb), отправляем туда.
     if [ -n "$history_sink" ]; then
         echo -e "$history_line" >"$history_sink" 2>/dev/null && return
     fi
 
-    # Иначе пишем в локальный файл ~/.bash_eternal_history.
     old_umask=$(umask)
     umask 077
     echo -e "$history_line" >> ~/.bash_eternal_history
@@ -42,15 +38,18 @@ sshb() {
         echo "Не удалось создать временный каталог." >&2
         return 1
     fi
-    # Гарантированная очистка временного каталога при выходе из функции
-    trap 'rm -rf "$tmp_dir"' RETURN
+
+    local temp_bundle
+    temp_bundle=$(mktemp)
+
+    # Гарантированная очистка обоих временных ресурсов при выходе из функции.
+    trap 'rm -rf "$tmp_dir" "$temp_bundle"' RETURN
 
     local control_socket="${tmp_dir}/control-socket"
     local ssh="ssh -S ${control_socket}"
     local history_command="rm -f ~/.bash-ssh.history"
     local history_port
 
-    # Список файлов для синхронизации окружения. Порядок важен.
     local env_files=(
         "$HOME/.bashrc"
         "$HOME/.bash_export"
@@ -58,9 +57,6 @@ sshb() {
         "$HOME/.bash_aliases"
     )
 
-    # УЛУЧШЕНО: Собираем в один пакет только существующие и читаемые файлы.
-    local temp_bundle
-    temp_bundle=$(mktemp)
     for file in "${env_files[@]}"; do
         [ -r "$file" ] && cat "$file" >> "$temp_bundle"
     done
@@ -70,7 +66,7 @@ sshb() {
     fi
 
     # Создаем управляющее соединение в фоновом режиме.
-    $ssh -fNM "$@" || { rm -f "$temp_bundle"; return 1; }
+    $ssh -fNM "$@" || return 1
 
     # Если мы находимся во вложенной сессии, пробрасываем порт истории дальше.
     if [ -n "$history_port" ]; then
@@ -81,7 +77,6 @@ sshb() {
 
     # Отправляем наш собранный "пакет" на удаленный сервер.
     cat "$temp_bundle" | $ssh placeholder "command -v bash >/dev/null || { echo 'Ошибка: bash не найден на удаленном сервере!' >&2; exit 1; }; ${history_command}; cat >~/.bash-ssh"
-    rm -f "$temp_bundle" # Очищаем локальный временный пакет
 
     # Запускаем интерактивную оболочку на удаленной машине с нашим окружением.
     $ssh "$@" -t 'SHELL=~/.bash-ssh; chmod +x $SHELL; exec bash --rcfile $SHELL -i'
@@ -587,7 +582,7 @@ hg() {
 # Пример: transfer report.pdf
 transfer() {
     if ! command -v curl &>/dev/null; then
-        echo "Ошибка: 'curl' не найден." >&2
+        echo "Ошибка: команда 'curl' не найдена." >&2
         return 1
     fi
     if [ $# -eq 0 ]; then
@@ -596,24 +591,18 @@ transfer() {
     fi
     local file="$1"
     local file_name
-    if [ -t 0 ]; then
+    if [ -t 0 ]; then # Проверяем, что stdin - это терминал (т.е. не pipe)
+        if [ ! -e "$file" ]; then echo "Ошибка: '$file' не существует." >&2; return 1; fi
         file_name=$(basename "$file")
-        if [ ! -e "$file" ]; then
-            echo "Ошибка: '$file' не существует." >&2
-            return 1
-        fi
         if [ -d "$file" ]; then
-            # ИСПРАВЛЕНО: Создаем временный zip-файл для чистоты
-            local temp_zip
-            temp_zip=$(mktemp -u).zip
+            local temp_zip; temp_zip=$(mktemp --suffix=.zip)
             (cd "$(dirname "$file")" && zip -r -q "$temp_zip" "$(basename "$file")")
             curl --progress-bar --upload-file "$temp_zip" "https://transfer.sh/${file_name}.zip"
-            rm -f "$temp_zip"
+            rm -f "$temp_zip" # Ручная очистка
         else
-            cat "$file" |
-            curl --progress-bar --upload-file "-" "https://transfer.sh/$file_name"
+            cat "$file" | curl --progress-bar --upload-file "-" "https://transfer.sh/$file_name"
         fi
-    else
+    else # Данные поступают через pipe
         file_name="$1"
         curl --progress-bar --upload-file "-" "https://transfer.sh/$file_name"
     fi
@@ -689,13 +678,19 @@ setup_os_aliases() {
 # Интерактивно переключиться на другую ветку Git.
 # Пример: Начните вводить имя ветки для поиска и нажмите Enter.
 gfb() {
-    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
-    local branches branch
-    branches=$(git for-each-ref --count=30 --sort=-committerdate refs/heads/ --format="%(refname:short)") &&
-    # ИСПРАВЛЕНО: Убран некорректный разделитель -d '\t'
-    branch=$(echo "$branches" |
-        fzf --preview 'git log --color=always --oneline -n 15 {1}' --reverse) &&
-    git checkout "$(echo "$branch" | sed "s/.* //")"
+
+    if ! command -v fzf &>/dev/null; then
+        echo "Ошибка: команда 'fzf' не найдена." >&2
+        return 1
+    fi
+
+    local branch
+    branch=$(git for-each-ref --count=30 --sort=-committerdate refs/heads/ --format="%(refname:short)" |
+        fzf --preview 'git log --color=always --oneline -n 15 {}' --reverse)
+    
+    if [ -n "$branch" ]; then
+        git checkout "$branch"
+    fi
 }
 
 # Интерактивно просмотреть историю коммитов (git log).
@@ -714,13 +709,20 @@ gfl() {
 # Интерактивно выбрать файлы для добавления в коммит (git add).
 # Пример: Выберите файлы клавишей Tab и нажмите Enter.
 gfa() {
-    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    if ! command -v fzf &>/dev/null; then
+        echo "Ошибка: команда 'fzf' не найдена." >&2
+        return 1
+    fi
+
     local files
     files=$(git -c color.status=always status --short |
         fzf -m --ansi --nth 2.. --preview 'git diff --color=always -- {-1} | sed "s/.* //"' |
         cut -c 4-)
     if [ -n "$files" ]; then
-        echo "$files" | xargs git add
+        # Безопасная обработка имен файлов с пробелами
+        echo "$files" | while IFS= read -r file; do
+            git add -- "$file"
+        done
         git status -sb
     fi
 }
@@ -742,11 +744,19 @@ gfc() {
 # Интерактивно удалить одну или несколько локальных веток.
 # Пример: Выберите ветки клавишей Tab и нажмите Enter для удаления.
 gfd() {
-    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    if ! command -v fzf &>/dev/null; then
+        echo "Ошибка: команда 'fzf' не найдена." >&2
+        return 1
+    fi
+
     local branches
     branches=$(git branch | grep -vE '^\*|main|master' | fzf -m --preview 'git log --color=always --oneline -n 10 {}')
     if [ -n "$branches" ]; then
-        echo "$branches" | xargs git branch -d
+        # Безопасная обработка имен веток
+        echo "$branches" | while IFS= read -r branch; do
+            # Удаляем пробелы, которые может добавить fzf
+            git branch -d "$(echo "$branch" | xargs)"
+        done
     fi
 }
 
@@ -1142,19 +1152,28 @@ sshm() {
 # Требует: fzf, ripgrep (rg), bat (опционально, для красивого предпросмотра)
 # Пример: frg "MyApi.Component"
 frg() {
-    if ! command -v rg &>/dev/null; then echo "Ошибка: ripgrep (rg) не найден." >&2; return 1; fi
+    if ! command -v rg &>/dev/null; then
+        echo "Ошибка: команда 'ripgrep (rg)' не найдена." >&2
+        return 1
+    fi
     
-    local preview_cmd="cat {}"
+    local preview_cmd="cat {1}"
     if command -v bat &>/dev/null; then
         preview_cmd="bat --color=always --highlight-line {2} {1}"
     fi
 
-    rg --color=always --line-number --no-heading "$1" |
+    local file_line
+    file_line=$(rg --color=always --line-number --no-heading "$1" |
       fzf --ansi \
           --delimiter ':' \
           --preview-window 'up,60%,border-bottom' \
-          --preview "$preview_cmd" \
-          --bind "enter:execute(echo {1}:{2} | xargs -I % sh -c '\${EDITOR:-nano} +{2} {1}')"
+          --preview "$preview_cmd")
+          
+    if [ -n "$file_line" ]; then
+        local file_to_open; file_to_open=$(echo "$file_line" | cut -d: -f1)
+        local line_to_jump; line_to_jump=$(echo "$file_line" | cut -d: -f2)
+        ${EDITOR:-nano} +"$line_to_jump" "$file_to_open"
+    fi
 }
 
 # Найти все комментарии TODO, FIXME, NOTE в проекте.
@@ -1162,11 +1181,16 @@ frg() {
 # Пример: ftodo
 ftodo() {
     if ! command -v rg &>/dev/null; then echo "Ошибка: ripgrep (rg) не найден." >&2; return 1; fi
-    
+    # ИСПРАВЛЕНО: Возвращена проверка на 'bat' для надежности
+    local preview_cmd="cat {1}"
+    if command -v bat &>/dev/null; then
+        preview_cmd="bat --color=always --highlight-line {2} {1}"
+    fi
+
     rg --line-number --no-heading --color=always -e "(TODO|FIXME|NOTE|HACK):" |
       fzf --ansi \
           --delimiter ':' \
-          --preview 'bat --color=always --highlight-line {2} {1}' \
+          --preview "$preview_cmd" \
           --preview-window 'up,60%,border-bottom'
 }
 
