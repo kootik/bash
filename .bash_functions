@@ -1246,19 +1246,19 @@ fpr() {
 # Пример: fports
 fports() {
     if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
-    
+
     local port_info
     port_info=$(sudo ss -tulanp | fzf --height 50% --reverse --header="Выберите соединение для просмотра деталей:")
-    
+
     if [[ -n "$port_info" ]]; then
         local pid
-        # Извлекаем PID из сложной строки ss
-        pid=$(echo "$port_info" | grep -oP 'pid=\K\d+')
-        
+        # ИСПРАВЛЕНО: Извлекаем только ПЕРВЫЙ PID, чтобы избежать ошибок с многопроцессными сервисами.
+        pid=$(echo "$port_info" | grep -oP 'pid=\K\d+' | head -n 1)
+
         if [[ -n "$pid" ]]; then
             echo -e "\n\033[1;34m--- Информация о процессе (PID: ${pid}) ---\033[0m"
             ps -o user,pid,ppid,%cpu,%mem,start,etime,cmd -p "$pid"
-            
+
             read -p "Завершить этот процесс? (y/n): " confirm
             if [[ $confirm == [yY] ]]; then
                 sudo kill -9 "$pid"
