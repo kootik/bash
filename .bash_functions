@@ -142,15 +142,17 @@ fd() {
 # Требует утилиты trash-cli (например, sudo apt install trash-cli)
 # Использование: trash file.txt folder/
 trash() {
-    if ! command -v trash-put &> /dev/null; then
-        echo "Команда 'trash-put' не найдена. Установите 'trash-cli'." >&2
-        return 1
+    # Если trash-cli установлен, используем его
+    if command -v trash-put &> /dev/null; then
+        trash-put "$@"
+        return
     fi
-    if [ $# -eq 0 ]; then
-        echo "Использование: trash <файл/каталог> [...]" >&2
-        return 1
-    fi
-    trash-put "$@"
+
+    # Запасной механизм
+    local trash_dir="$HOME/.Trash"
+    mkdir -p "$trash_dir"
+    echo "Предупреждение: 'trash-put' не найден. Файлы будут перемещены в '$trash_dir'." >&2
+    mv -v "$@" "$trash_dir"
 }
 # Универсальная функция для извлечения файлов из архивов.
 # Пример: extract archive.zip backup.tar.gz
@@ -223,7 +225,7 @@ fsearch() {
     fi
     local text="$1"
     shift
-    grep -rnw "$@" -e "$text"
+    grep -rnwE "$@" -e "$text"
 }
 # --- Сетевые утилиты ---
 # Выполняет DNS-запрос через Google DNS-over-HTTPS.
@@ -316,6 +318,14 @@ duh() {
     else
         du -sh "$1"
     fi
+}
+
+# Показывает размер подкаталогов в указанном пути, отсортированный по убыванию.
+# Пример: dus /var
+dus() {
+    # Используем "$@" для передачи всех аргументов (например, пути) в du.
+    # Если аргументы не переданы, используется текущий каталог ".".
+    du -h --max-depth=1 "${@:-.}" | sort -rh
 }
 
 # Показывает список доступных функций с их описанием и примерами.
@@ -414,9 +424,9 @@ sysinfo() {
     echo -e "\e[1;32mСЕТЬ\e[0m"
     echo -e "  Имя хоста:    $(hostname)"
     echo "  IP-адреса:"
-    if command -v ip &> /dev/null; then
+    if command -v ip &>/dev/null; then
         ip -br a | awk '{printf "    %-15s %s\n", $1, $3}'
-    elif command -v ifconfig &> /dev/null; then  # Fallback для старых систем или macOS
+    elif command -v ifconfig &>/dev/null; then  # Fallback для старых систем или macOS
         ifconfig | grep "inet " | awk '{print "    " $2}'
     else
         echo "    Не удалось получить IP (установите ip или ifconfig)."
@@ -456,13 +466,13 @@ checkport() {
 # "Умная" блокировка экрана.
 # Пример: lock
 lock() {
-    if command -v xdg-screensaver &> /dev/null; then
+    if command -v xdg-screensaver &>/dev/null; then
         xdg-screensaver lock
-    elif command -v loginctl &> /dev/null; then
+    elif command -v loginctl &>/dev/null; then
         loginctl lock-session
-    elif command -v gnome-screensaver-command &> /dev/null; then
+    elif command -v gnome-screensaver-command &>/dev/null; then
         gnome-screensaver-command -l
-    elif command -v xflock4 &> /dev/null; then
+    elif command -v xflock4 &>/dev/null; then
         xflock4
     else
         echo "Не найдена команда для блокировки экрана." >&2
@@ -673,13 +683,19 @@ setup_os_aliases() {
 # Интерактивно переключиться на другую ветку Git.
 # Пример: Начните вводить имя ветки для поиска и нажмите Enter.
 gfb() {
-    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
-    local branches branch
-    branches=$(git for-each-ref --count=30 --sort=-committerdate refs/heads/ --format="%(refname:short)") &&
-    # ИСПРАВЛЕНО: Убран некорректный разделитель -d '\t'
-    branch=$(echo "$branches" |
-        fzf --preview 'git log --color=always --oneline -n 15 {1}' --reverse) &&
-    git checkout "$(echo "$branch" | sed "s/.* //")"
+
+    if ! command -v fzf &>/dev/null; then
+        echo "Ошибка: команда 'fzf' не найдена." >&2
+        return 1
+    fi
+
+    local branch
+    branch=$(git for-each-ref --count=30 --sort=-committerdate refs/heads/ --format="%(refname:short)" |
+        fzf --preview 'git log --color=always --oneline -n 15 {}' --reverse)
+    
+    if [ -n "$branch" ]; then
+        git checkout "$branch"
+    fi
 }
 
 # Интерактивно просмотреть историю коммитов (git log).
@@ -698,13 +714,20 @@ gfl() {
 # Интерактивно выбрать файлы для добавления в коммит (git add).
 # Пример: Выберите файлы клавишей Tab и нажмите Enter.
 gfa() {
-    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    if ! command -v fzf &>/dev/null; then
+        echo "Ошибка: команда 'fzf' не найдена." >&2
+        return 1
+    fi
+
     local files
     files=$(git -c color.status=always status --short |
         fzf -m --ansi --nth 2.. --preview 'git diff --color=always -- {-1} | sed "s/.* //"' |
         cut -c 4-)
     if [ -n "$files" ]; then
-        echo "$files" | xargs git add
+        # Безопасная обработка имен файлов с пробелами
+        echo "$files" | while IFS= read -r file; do
+            git add -- "$file"
+        done
         git status -sb
     fi
 }
@@ -726,11 +749,19 @@ gfc() {
 # Интерактивно удалить одну или несколько локальных веток.
 # Пример: Выберите ветки клавишей Tab и нажмите Enter для удаления.
 gfd() {
-    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    if ! command -v fzf &>/dev/null; then
+        echo "Ошибка: команда 'fzf' не найдена." >&2
+        return 1
+    fi
+
     local branches
     branches=$(git branch | grep -vE '^\*|main|master' | fzf -m --preview 'git log --color=always --oneline -n 10 {}')
     if [ -n "$branches" ]; then
-        echo "$branches" | xargs git branch -d
+        # Безопасная обработка имен веток
+        echo "$branches" | while IFS= read -r branch; do
+            # Удаляем пробелы, которые может добавить fzf
+            git branch -d "$(echo "$branch" | xargs)"
+        done
     fi
 }
 
@@ -759,12 +790,21 @@ calc() {
     echo "scale=10; $1" | bc -l | sed -E 's/([.0-9]*[1-9])0+$|\.0+$/\1/'
 }
 
-# Быстрое резервное копирование домашней директории.
+# Быстрое резервное копирование домашней директории с исключением файла бекапа и загрузок.
 # Пример: backup_home /path/to/backup.tar.gz
 backup_home() {
     local output="${1:-$HOME/backup_$(date +%F).tar.gz}"
     echo "Создание резервной копии в $output..."
-    tar -czvf "$output" --exclude="$HOME/.cache" --exclude="$HOME/Downloads" --exclude="$output" "$HOME"
+    tar -czvf "$output" \
+        --exclude="$HOME/.cache" \
+        --exclude="$HOME/Downloads" \
+        --exclude="$HOME/.npm" \
+        --exclude="$HOME/.rustup" \
+        --exclude="$HOME/.local/share/Trash" \
+        --exclude="*/node_modules" \
+        --exclude="*/target" \
+        --exclude="$output" \
+        "$HOME"
     echo "Резервная копия успешно создана."
 }
 
