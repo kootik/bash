@@ -927,17 +927,43 @@ jwtdec() {
 # Интерактивно "запрыгнуть" в работающий Docker-контейнер.
 # Пример: d_dive (появится список контейнеров для выбора)
 d_dive() {
-    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    # --- УЛУЧШЕНИЕ: Проверка наличия docker и fzf ---
+    if ! command -v docker &>/dev/null; then
+        echo "Ошибка: docker не найден." >&2
+        return 1
+    fi
+    if ! command -v fzf &>/dev/null; then
+        echo "Ошибка: fzf не найден." >&2
+        return 1
+    fi
+
+    # --- УЛУЧШЕНИЕ: Проверка, запущен ли Docker daemon ---
+    if ! docker info >/dev/null 2>&1; then
+        echo "Ошибка: Docker daemon не запущен." >&2
+        return 1
+    fi
+
     local container
-    container=$(docker ps --format "{{.ID}}\t{{.Names}}\t{{.Image}}" | fzf --height 40% --reverse --header "Выберите контейнер:")
+    # Получаем список только *работающих* контейнеров.
+    container_list=$(docker ps --format "{{.ID}}\t{{.Names}}\t{{.Image}}")
+    if [[ -z "$container_list" ]]; then
+        echo "Не найдено ни одного запущенного контейнера." >&2
+        return 0
+    fi
+
+    container=$(echo "$container_list" | fzf --height 40% --reverse --header "Выберите контейнер:")
+    
+    # Если был выбран контейнер (а не нажата клавиша Esc)
     if [[ -n "$container" ]]; then
         local container_id
         container_id=$(echo "$container" | awk '{print $1}')
-        # Пытаемся запустить bash, если не получается - sh (для Alpine-контейнеров)
+        
         echo "Подключение к контейнеру $container_id..."
+        # Пытаемся запустить bash, если не получается - sh (для Alpine-контейнеров)
         docker exec -it "$container_id" bash || docker exec -it "$container_id" sh
     fi
 }
+
 
 # Показать логи контейнера с возможностью слежения (follow).
 # Пример: dlogs (выбрать контейнер), dlogs -f (выбрать и следить)
