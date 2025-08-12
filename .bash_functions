@@ -578,36 +578,55 @@ hg() {
     history | grep -E --color=auto "$@"
 }
 
-# Загружает файл или каталог на transfer.sh и возвращает ссылку.
-# Пример: transfer report.pdf
-transfer() {
+#   clbin - Загружает данные на clbin.com
+#   clbin my_file.txt
+#   clbin my_directory/
+#
+clbin() {
     if ! command -v curl &>/dev/null; then
         echo "Ошибка: команда 'curl' не найдена." >&2
         return 1
     fi
+
+    # Случай 1: Данные поступают из stdin (пайп)
+    if [ ! -t 0 ]; then
+        curl --progress-bar -F 'clbin=<-' https://clbin.com
+        return
+    fi
+
+    # Случай 2: Данные передаются как аргументы
     if [ $# -eq 0 ]; then
-        echo "Использование: transfer <файл|каталог> или cat <файл> | transfer <имя_файла>" >&2
+        echo "Использование: <команда> | clbin" >&2
+        echo "       или: clbin <файл>" >&2
+        echo "       или: clbin <каталог>" >&2
         return 1
     fi
-    local file="$1"
-    local file_name
-    if [ -t 0 ]; then # Проверяем, что stdin - это терминал (т.е. не pipe)
-        if [ ! -e "$file" ]; then echo "Ошибка: '$file' не существует." >&2; return 1; fi
-        file_name=$(basename "$file")
-        if [ -d "$file" ]; then
-            local temp_zip; temp_zip=$(mktemp --suffix=.zip)
-            (cd "$(dirname "$file")" && zip -r -q "$temp_zip" "$(basename "$file")")
-            curl --progress-bar --upload-file "$temp_zip" "https://transfer.sh/${file_name}.zip"
-            rm -f "$temp_zip" # Ручная очистка
-        else
-            cat "$file" | curl --progress-bar --upload-file "-" "https://transfer.sh/$file_name"
-        fi
-    else # Данные поступают через pipe
-        file_name="$1"
-        curl --progress-bar --upload-file "-" "https://transfer.sh/$file_name"
+
+    local target="$1"
+
+    if [ ! -e "$target" ]; then
+        echo "Ошибка: '$target' не найден." >&2
+        return 1
     fi
-    echo
+
+    # Аргумент - это каталог
+    if [ -d "$target" ]; then
+        if ! command -v zip &>/dev/null; then
+            echo "Ошибка: команда 'zip' не найдена для архивации каталога." >&2
+            return 1
+        fi
+        echo "Архивация каталога '$target' и отправка..." >&2
+        zip -r -q - "$target" | curl --progress-bar -F 'clbin=<-' https://clbin.com
+
+    # Аргумент - это файл
+    elif [ -f "$target" ]; then
+        cat "$target" | curl --progress-bar -F 'clbin=<-' https://clbin.com
+    else
+        echo "Ошибка: '$target' не является файлом или каталогом." >&2
+        return 1
+    fi
 }
+
 
 # Извлекает указанные столбцы из стандартного ввода.
 # Пример: ls -l | extract_column 1 9
