@@ -1053,30 +1053,84 @@ pg_backup() {
 
 # Интерактивно "убить" один или несколько процессов.
 # Требует: fzf
-# Пример: fkill (появится список процессов для выбора)
+# Пример: fkill
+#         fkill -a    (показать все процессы)
+#         fkill -s    (использовать sudo для kill)
+#         fkill -a -s (оба флага)
 fkill() {
     if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
-    
-    # Получаем PID выбранных процессов
-    local pids
-    pids=$(ps -ef | sed 1d | fzf -m --height 50% --reverse --header="Выберите процессы для завершения (Tab для выбора, Enter для подтверждения)")
-    
-    if [ -z "$pids" ]; then
+
+    local show_all=false
+    local use_sudo=false
+
+    # --- УЛУЧШЕНО: Парсинг аргументов для флагов ---
+    for arg in "$@"; do
+        case $arg in
+            -a|--all)
+                show_all=true
+                ;;
+            -s|--sudo)
+                use_sudo=true
+                ;;
+        esac
+    done
+
+    # --- Определяем, какие процессы показывать ---
+    local ps_command
+    if [[ "$show_all" = true || $EUID -eq 0 ]]; then
+        ps_command="ps -ef"
+        if [[ $EUID -ne 0 && "$show_all" = true ]]; then
+            echo "Режим '-a': Показываю все процессы..."
+        elif [[ $EUID -eq 0 ]]; then
+            echo "Запущено с правами root. Показываю все процессы..."
+        fi
+    else
+        ps_command="ps -f -u $USER"
+    fi
+
+    # --- Определяем, как выполнять kill ---
+    local kill_cmd="kill"
+    if [[ "$use_sudo" = true || $EUID -eq 0 ]]; then
+        kill_cmd="sudo kill"
+    fi
+
+    # Получаем PID выбранных процессов, позволяя множественный выбор (-m)
+    local selection
+    selection=$($ps_command | sed 1d | grep -vE "fkill|fzf" | fzf -m --height 50% --reverse --header="Выберите процессы для завершения (Tab для выбора, Enter для подтверждения)")
+
+    if [ -z "$selection" ]; then
         echo "Операция отменена."
         return 0
     fi
-    
-    # Извлекаем только вторую колонку (PID)
+
     local pids_to_kill
-    pids_to_kill=$(echo "$pids" | awk '{print $2}')
-    
-    echo "Выбраны PID: ${pids_to_kill}"
-    read -p "Какой сигнал отправить? (15=TERM, 9=KILL) [15]: " signal
-    signal=${signal:-15} # По умолчанию SIGTERM
-    
-    echo "$pids_to_kill" | xargs -r kill -"${signal}"
-    echo "Команда kill с сигналом ${signal} отправлена."
+    pids_to_kill=$(echo "$selection" | awk '{print $2}')
+
+    echo "Выбраны PID:"
+    echo "$pids_to_kill" | sed 's/^/  /'
+
+    read -p "Действие: (k)ill (SIGTERM), (f)orce-kill (SIGKILL) [k]: " action
+    local signal=15 # По умолчанию обычный kill (SIGTERM)
+
+    if [[ "$action" == "f" || "$action" == "F" ]]; then
+        signal=9 # Если введено 'f', используем force-kill (SIGKILL)
+    fi
+
+    echo "Отправка сигнала ${signal} с помощью '$kill_cmd'..."
+
+    local all_killed=true
+    for pid in $pids_to_kill; do
+        if ! $kill_cmd -"${signal}" "$pid" 2>/dev/null; then
+            echo "Не удалось завершить процесс ${pid}. Возможно, он уже был завершен или у вас недостаточно прав." >&2
+            all_killed=false
+        fi
+    done
+
+    if [ "$all_killed" = true ]; then
+        echo "Команда kill успешно отправлена всем выбранным процессам."
+    fi
 }
+
 
 # Интерактивное управление службами systemd.
 # Требует: fzf, systemctl
