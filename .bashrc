@@ -36,14 +36,14 @@ fi
 
 # Вызываем функцию для создания псевдонимов под текущую ОС
 
-# setup_os_aliases
+setup_os_aliases
 # =============================================================================
 #  Раздел 3: Настройка командной строки (Prompt) и автодополнения
 # =============================================================================
 
 # Добавляем функцию "вечной истории" в PROMPT_COMMAND.
 # Она будет выполняться перед каждой новой командой.
-# [[ "$PROMPT_COMMAND" == *update_eternal_history* ]] || PROMPT_COMMAND="update_eternal_history;$PROMPT_COMMAND"
+[[ "$PROMPT_COMMAND" == *update_eternal_history* ]] || PROMPT_COMMAND="update_eternal_history;$PROMPT_COMMAND"
 
 # Интеграция с Byobu и настройка стандартного PS1.
 if [ -r ~/.byobu/prompt ]; then
