@@ -956,7 +956,15 @@ dlogs() {
 # Требует: terraform, fzf
 # Пример: tfswitch (появится список для выбора)
 tfswitch() {
-    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    # --- УЛУЧШЕНИЕ: Добавлена проверка наличия terraform ---
+    if ! command -v terraform &>/dev/null; then
+        echo "Ошибка: terraform не найден." >&2
+        return 1
+    fi
+    if ! command -v fzf &>/dev/null; then
+        echo "Ошибка: fzf не найден." >&2
+        return 1
+    fi
     
     # Проверяем, инициализирован ли проект
     if [ ! -d ".terraform" ]; then
@@ -965,12 +973,19 @@ tfswitch() {
     fi
     
     local workspace
-    workspace=$(terraform workspace list | sed 's/\*//g' | fzf --height 20% --reverse --prompt="Выберите workspace: ")
     
+    # --- ИСПРАВЛЕНИЕ: Более надежная очистка имени воркспейса ---
+    # sed 's/^[ *]*//' удаляет все пробелы и звездочку (*) только в НАЧАЛЕ строки.
+    # Это гарантирует, что имена с пробелами (например, "my workspace") останутся нетронутыми.
+    workspace=$(terraform workspace list | sed 's/^[ *]*//' | fzf --height 20% --reverse --prompt="Выберите workspace: ")
+    
+    # Если был выбран воркспейс (а не нажата клавиша Esc)
     if [[ -n "$workspace" ]]; then
-        terraform workspace select "${workspace// /}" # Удаляем пробелы, которые оставляет sed
+        # Теперь мы передаем имя "как есть", в кавычках. Это безопасно.
+        terraform workspace select "$workspace"
     fi
 }
+
 
 # Синхронизировать форк с оригинальным (upstream) репозиторием.
 # Предполагается, что у вас уже добавлен remote с именем 'upstream'.
