@@ -6,83 +6,96 @@
 #   РАЗДЕЛ 0: СИСТЕМНЫЕ И СЕССИОННЫЕ ФУНКЦИИ
 # ==============================================================================
 
-# Сохраняет расширенную историю команд.
+# --- Функция для ведения вечной истории (локально и с удаленных хостов) ---
 update_eternal_history() {
-    local histfile_size
-    histfile_size=$(stat -c %s "$HISTFILE" 2>/dev/null || echo 0)
-    local history_line
-    local history_sink
-    local old_umask
+    local last_command
+    # Надежно получаем последнюю команду, убирая начальные пробелы.
+    last_command=$(fc -ln -1 | sed 's/^[ \t]*//')
 
-    history -a
-    ((histfile_size == $(stat -c %s "$HISTFILE" 2>/dev/null || echo 0))) && return
-
-    history_line="${USER}\t${HOSTNAME}\t${PWD}\t$(history 1)"
-    history_sink=$(readlink ~/.bash-ssh.history 2>/dev/null)
-
-    if [ -n "$history_sink" ]; then
-        echo -e "$history_line" >"$history_sink" 2>/dev/null && return
+    # Выходим, если команда пустая, является дубликатом предыдущей или это команда history.
+    if [[ -z "$last_command" || "$last_command" == "$_ETERNAL_HISTORY_LAST_CMD" || "$last_command" =~ ^history ]]; then
+        return
     fi
+    # Запоминаем последнюю команду, чтобы избежать дубликатов.
+    _ETERNAL_HISTORY_LAST_CMD="$last_command"
 
-    old_umask=$(umask)
-    umask 077
-    echo -e "$history_line" >> ~/.bash_eternal_history
-    umask "$old_umask"
+    local log_line
+    log_line="$(date '+%F %T')\t${USER}@${HOSTNAME}\t${PWD}\t${last_command}"
+
+    # Определяем, куда писать историю: в локальный файл или в канал для SSH.
+    local history_target="$HOME/.bash_eternal_history"
+    local ssh_pipe="$HOME/.bash-ssh.history"
+
+    if [ -p "$ssh_pipe" ]; then
+        # Если мы в SSH-сессии, созданной sshb, пишем в специальный канал (pipe).
+        # Запись блокируется, пока tail на другой стороне не прочитает ее.
+        echo -e "$log_line" > "$ssh_pipe"
+    else
+        # В обычной локальной сессии просто дописываем в файл.
+        local old_umask
+        old_umask=$(umask)
+        umask 077
+        echo -e "$log_line" >> "$history_target"
+        umask "$old_umask"
+    fi
 }
 
-# Продвинутая функция SSH для синхронизации окружения.
+
+# --- Улучшенная функция для интерактивного подключения с синхронизацией истории ---
 sshb() {
+    # --- 1. Подготовка и очистка ---
     local tmp_dir
     tmp_dir=$(mktemp -d ~/.ssh/sshb-control.XXXXXXXX)
     if [ -z "$tmp_dir" ]; then
         echo "Не удалось создать временный каталог." >&2
         return 1
     fi
-
-    local temp_bundle
-    temp_bundle=$(mktemp)
-
-    # Гарантированная очистка обоих временных ресурсов при выходе из функции.
-    trap 'rm -rf "$tmp_dir" "$temp_bundle"' RETURN
+    local listener_pid
+    # Гарантированная очистка и остановка фоновых процессов при выходе из функции.
+    trap 'rm -rf "$tmp_dir"; [[ -n "$listener_pid" ]] && kill "$listener_pid" &>/dev/null' RETURN
 
     local control_socket="${tmp_dir}/control-socket"
     local ssh="ssh -S ${control_socket}"
-    local history_command="rm -f ~/.bash-ssh.history"
-    local history_port
 
-    local env_files=(
-        "$HOME/.bashrc"
-        "$HOME/.bash_export"
-        "$HOME/.bash_functions"
-        "$HOME/.bash_aliases"
-    )
+    # --- 2. Надёжное определение хоста ---
+    local hostname
+    hostname=$(ssh -G "$@" | awk '/^hostname / { print $2 }')
+    if [ -z "$hostname" ]; then
+        echo "Ошибка: не удалось определить хост. Проверьте аргументы." >&2
+        return 1
+    fi
 
+    # --- 3. Сборка "пакета" с окружением ---
+    local temp_bundle
+    temp_bundle=$(mktemp)
+    # Добавляем очистку временного пакета в trap.
+    trap 'rm -rf "$tmp_dir" "$temp_bundle"; [[ -n "$listener_pid" ]] && kill "$listener_pid" &>/dev/null' RETURN
+
+    local env_files=("$HOME/.bashrc" "$HOME/.bash_export" "$HOME/.bash_functions" "$HOME/.bash_aliases")
     for file in "${env_files[@]}"; do
         [ -r "$file" ] && cat "$file" >> "$temp_bundle"
     done
 
-    if [ -r ~/.bash-ssh ]; then
-        history_port=$(basename "$(readlink ~/.bash-ssh.history 2>/dev/null)")
-    fi
-
-    # Создаем управляющее соединение в фоновом режиме.
+    # --- 4. Создание мастер-соединения ---
     $ssh -fNM "$@" || return 1
 
-    # Если мы находимся во вложенной сессии, пробрасываем порт истории дальше.
-    if [ -n "$history_port" ]; then
-        local history_remote_port
-        history_remote_port="$($ssh -O forward -R 0:127.0.0.1:"$history_port" placeholder)"
-        history_command="ln -nsf /dev/tcp/127.0.0.1/$history_remote_port ~/.bash-ssh.history"
-    fi
+    # --- 5. Запуск "слушателя" истории ---
+    # Эта команда запускает `tail -f` на удаленном хосте в фоне.
+    # Все, что пишется в удаленный файл-канал, передается по SSH на локальную машину
+    # и дописывается в локальный файл вечной истории.
+    ($ssh -n "$@" "tail -f ~/.bash-ssh.history" | while read -r; do echo "$REPLY" >> ~/.bash_eternal_history; done & ) &> /dev/null
+    listener_pid=$! # Сохраняем PID фонового процесса для его последующей остановки.
 
-    # Отправляем наш собранный "пакет" на удаленный сервер.
-    cat "$temp_bundle" | $ssh placeholder "command -v bash >/dev/null || { echo 'Ошибка: bash не найден на удаленном сервере!' >&2; exit 1; }; ${history_command}; cat >~/.bash-ssh"
+    # --- 6. Подготовка удаленного хоста ---
+    # Отправляем наш "пакет" и команду для создания файла-канала (pipe).
+    cat "$temp_bundle" | $ssh "$@" "cat > ~/.bash-ssh; [ -p ~/.bash-ssh.history ] || mkfifo -m 0600 ~/.bash-ssh.history"
+    rm -f "$temp_bundle" # Очищаем локальный временный пакет
 
-    # Запускаем интерактивную оболочку на удаленной машине с нашим окружением.
-    $ssh "$@" -t 'SHELL=~/.bash-ssh; chmod +x $SHELL; exec bash --rcfile $SHELL -i'
+    # --- 7. Запуск интерактивной сессии ---
+    $ssh -t "$@" "SHELL=~/.bash-ssh; chmod +x \$SHELL; exec bash --rcfile \$SHELL -i"
 
-    # Закрываем управляющее соединение при выходе.
-    $ssh placeholder -O exit &> /dev/null
+    # --- 8. Закрытие мастер-соединения при выходе ---
+    $ssh -O exit "$hostname" &> /dev/null
 }
 
 # --- Утилиты ---
