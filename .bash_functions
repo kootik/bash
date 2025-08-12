@@ -70,23 +70,18 @@ sshb() {
     temp_bundle=$(mktemp)
     trap 'rm -rf "$tmp_dir" "$temp_bundle"; [[ -n "$listener_pid" ]] && kill "$listener_pid" &>/dev/null' RETURN
 
-    # ИСПРАВЛЕНИЕ: Собираем бандл в правильном порядке
-    # Сначала переменные, потом функции, потом псевдонимы
-    local env_files=("$HOME/.bash_export" "$HOME/.bash_functions" "$HOME/.bash_aliases")
+    # ИСПРАВЛЕНИЕ: Возвращаем .bashrc в список и обеспечиваем правильный порядок.
+    # Сначала переменные, потом функции, потом псевдонимы, и в конце - главный скрипт .bashrc, который их использует.
+    local env_files=(
+        "$HOME/.bash_export"
+        "$HOME/.bash_functions"
+        "$HOME/.bash_aliases"
+        "$HOME/.bashrc"
+    )
     for file in "${env_files[@]}"; do
         [ -r "$file" ] && cat "$file" >> "$temp_bundle"
     done
     
-    # ИСПРАВЛЕНИЕ: Добавляем вызов setup_os_aliases и настройку PROMPT_COMMAND в конец бандла,
-    # чтобы все функции уже были определены к этому моменту.
-    cat >> "$temp_bundle" <<'EOF'
-# --- Final setup executed on remote host ---
-setup_os_aliases
-[[ "$PROMPT_COMMAND" != *update_eternal_history* ]] && PROMPT_COMMAND="update_eternal_history;$PROMPT_COMMAND"
-echo "Удаленная конфигурация Bash успешно загружена."
-EOF
-
-
     # --- 4. Создание мастер-соединения ---
     $ssh -fNM "$@" || return 1
 
@@ -100,7 +95,6 @@ EOF
     rm -f "$temp_bundle" # Очищаем локальный временный пакет
 
     # --- 7. Запуск интерактивной сессии ---
-    # ИСПРАВЛЕНИЕ: Мы больше не используем .bashrc на удаленной машине, а напрямую наш бандл
     $ssh -t "$@" "SHELL=~/.bash-ssh; chmod +x \$SHELL; exec bash --rcfile \$SHELL -i"
 
     # --- 8. Закрытие мастер-соединения при выходе ---
