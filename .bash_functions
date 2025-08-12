@@ -414,7 +414,7 @@ h-func() {
             comment1 = "";
             comment2 = "";
         }
-    ' "$HOME/.bash_functions" | \
+    ' "$source_file" | \
     sort -f | \
     awk -F'\t' '{
         printf "  \033[1;33m%-18s\033[0m - %s\n", $1, $2;
@@ -457,7 +457,7 @@ h-alias() {
             alias_name = line;
             printf "  \033[1;33m%-18s\033[0m - %s\n", alias_name, comment;
         }
-    ' "$HOME/.bash_aliases"
+    ' "$source_file"
     echo ""
 }
 
