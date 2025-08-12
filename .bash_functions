@@ -420,9 +420,9 @@ sysinfo() {
     echo -e "\e[1;32mСЕТЬ\e[0m"
     echo -e "  Имя хоста:    $(hostname)"
     echo "  IP-адреса:"
-    if command -v ip &> /dev/null; then
+    if command -v ip &>/dev/null; then
         ip -br a | awk '{printf "    %-15s %s\n", $1, $3}'
-    elif command -v ifconfig &> /dev/null; then  # Fallback для старых систем или macOS
+    elif command -v ifconfig &>/dev/null; then  # Fallback для старых систем или macOS
         ifconfig | grep "inet " | awk '{print "    " $2}'
     else
         echo "    Не удалось получить IP (установите ip или ifconfig)."
@@ -462,13 +462,13 @@ checkport() {
 # "Умная" блокировка экрана.
 # Пример: lock
 lock() {
-    if command -v xdg-screensaver &> /dev/null; then
+    if command -v xdg-screensaver &>/dev/null; then
         xdg-screensaver lock
-    elif command -v loginctl &> /dev/null; then
+    elif command -v loginctl &>/dev/null; then
         loginctl lock-session
-    elif command -v gnome-screensaver-command &> /dev/null; then
+    elif command -v gnome-screensaver-command &>/dev/null; then
         gnome-screensaver-command -l
-    elif command -v xflock4 &> /dev/null; then
+    elif command -v xflock4 &>/dev/null; then
         xflock4
     else
         echo "Не найдена команда для блокировки экрана." >&2
@@ -623,6 +623,7 @@ clbin() {
         return 1
     fi
 }
+
 
 
 # Извлекает указанные столбцы из стандартного ввода.
@@ -847,6 +848,7 @@ gfr() {
         git rebase -i "$commit"
     fi
 }
+
 # Интерактивно переключить текущее пространство имен (namespace).
 # Пример: kns (появится список для выбора)
 kns() {
