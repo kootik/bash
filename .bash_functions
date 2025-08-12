@@ -28,8 +28,8 @@ update_eternal_history() {
 
     if [ -p "$ssh_pipe" ]; then
         # Если мы в SSH-сессии, созданной sshb, пишем в специальный канал (pipe).
-        # Запись блокируется, пока tail на другой стороне не прочитает ее.
-        echo -e "$log_line" > "$ssh_pipe"
+        # Подавляем ошибку "Interrupted system call" при нажатии Ctrl+C.
+        echo -e "$log_line" > "$ssh_pipe" 2>/dev/null || true
     else
         # В обычной локальной сессии просто дописываем в файл.
         local old_umask
@@ -68,21 +68,29 @@ sshb() {
     # --- 3. Сборка "пакета" с окружением ---
     local temp_bundle
     temp_bundle=$(mktemp)
-    # Добавляем очистку временного пакета в trap.
     trap 'rm -rf "$tmp_dir" "$temp_bundle"; [[ -n "$listener_pid" ]] && kill "$listener_pid" &>/dev/null' RETURN
 
-    local env_files=("$HOME/.bashrc" "$HOME/.bash_export" "$HOME/.bash_functions" "$HOME/.bash_aliases")
+    # ИСПРАВЛЕНИЕ: Собираем бандл в правильном порядке
+    # Сначала переменные, потом функции, потом псевдонимы
+    local env_files=("$HOME/.bash_export" "$HOME/.bash_functions" "$HOME/.bash_aliases")
     for file in "${env_files[@]}"; do
         [ -r "$file" ] && cat "$file" >> "$temp_bundle"
     done
+    
+    # ИСПРАВЛЕНИЕ: Добавляем вызов setup_os_aliases и настройку PROMPT_COMMAND в конец бандла,
+    # чтобы все функции уже были определены к этому моменту.
+    cat >> "$temp_bundle" <<'EOF'
+# --- Final setup executed on remote host ---
+setup_os_aliases
+[[ "$PROMPT_COMMAND" != *update_eternal_history* ]] && PROMPT_COMMAND="update_eternal_history;$PROMPT_COMMAND"
+echo "Удаленная конфигурация Bash успешно загружена."
+EOF
+
 
     # --- 4. Создание мастер-соединения ---
     $ssh -fNM "$@" || return 1
 
     # --- 5. Запуск "слушателя" истории ---
-    # Эта команда запускает `tail -f` на удаленном хосте в фоне.
-    # Все, что пишется в удаленный файл-канал, передается по SSH на локальную машину
-    # и дописывается в локальный файл вечной истории.
     ($ssh -n "$@" "tail -f ~/.bash-ssh.history" | while read -r; do echo "$REPLY" >> ~/.bash_eternal_history; done & ) &> /dev/null
     listener_pid=$! # Сохраняем PID фонового процесса для его последующей остановки.
 
@@ -92,6 +100,7 @@ sshb() {
     rm -f "$temp_bundle" # Очищаем локальный временный пакет
 
     # --- 7. Запуск интерактивной сессии ---
+    # ИСПРАВЛЕНИЕ: Мы больше не используем .bashrc на удаленной машине, а напрямую наш бандл
     $ssh -t "$@" "SHELL=~/.bash-ssh; chmod +x \$SHELL; exec bash --rcfile \$SHELL -i"
 
     # --- 8. Закрытие мастер-соединения при выходе ---
@@ -375,6 +384,13 @@ dus() {
 # Показывает список доступных функций с их описанием и примерами.
 # Пример: h-func
 h-func() {
+    # ИСПРАВЛЕНИЕ: Определяем, откуда читать файл с функциями
+    local source_file="$HOME/.bash_functions"
+    if [[ "$SHELL" == *".bash-ssh" ]]; then
+        source_file="$SHELL"
+    fi
+    if [ ! -f "$source_file" ]; then echo "Файл с функциями не найден: $source_file" >&2; return 1; fi
+
     echo -e "\n\e[1;32mПОЛЬЗОВАТЕЛЬСКИЕ ФУНКЦИИ (подсказка)\e[0m"
     awk '
         /^#/ {
@@ -412,6 +428,13 @@ h-func() {
 # Показывает список доступных псевдонимов (aliases) с их описанием.
 # Пример: h-alias
 h-alias() {
+    # ИСПРАВЛЕНИЕ: Определяем, откуда читать файл с псевдонимами
+    local source_file="$HOME/.bash_aliases"
+    if [[ "$SHELL" == *".bash-ssh" ]]; then
+        source_file="$SHELL"
+    fi
+    if [ ! -f "$source_file" ]; then echo "Файл с псевдонимами не найден: $source_file" >&2; return 1; fi
+
     echo -e "\n\e[1;32mПОЛЬЗОВАТЕЛЬСКИЕ ПСЕВДОНИМЫ (подсказка)\e[0m"
     awk '
         /^# --.*--$/ {
@@ -1480,4 +1503,3 @@ fcd() {
         fi
     fi
 }
-
