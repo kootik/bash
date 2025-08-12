@@ -837,3 +837,16 @@ wfile() {
     shift
     watch -n 1 -d -- "$@" "$file"
 }
+
+# Интерактивный rebase на выбранный коммит из лога.
+# Пример: gfr
+gfr() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+
+    local commit
+    commit=$(git log --oneline --color=always | fzf --ansi --preview 'git show --color=always {+1}' | awk '{print $1}')
+
+    if [ -n "$commit" ]; then
+        git rebase -i "$commit"
+    fi
+}
