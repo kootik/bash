@@ -942,15 +942,44 @@ d_dive() {
 # Показать логи контейнера с возможностью слежения (follow).
 # Пример: dlogs (выбрать контейнер), dlogs -f (выбрать и следить)
 dlogs() {
-    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    # --- УЛУЧШЕНИЕ: Проверка наличия docker и fzf ---
+    if ! command -v docker &>/dev/null; then
+        echo "Ошибка: docker не найден." >&2
+        return 1
+    fi
+    if ! command -v fzf &>/dev/null; then
+        echo "Ошибка: fzf не найден." >&2
+        return 1
+    fi
+
+    # --- УЛУЧШЕНИЕ: Проверка, запущен ли Docker daemon ---
+    if ! docker info >/dev/null 2>&1; then
+        echo "Ошибка: Docker daemon не запущен." >&2
+        return 1
+    fi
+
     local container
-    container=$(docker ps -a --format "{{.ID}}\t{{.Names}}\t{{.Image}}" | fzf --height 40% --reverse --header "Выберите контейнер для просмотра логов:")
+    # Получаем список контейнеров. Если docker ps завершается с ошибкой, fzf не будет запущен.
+    container_list=$(docker ps -a --format "{{.ID}}\t{{.Names}}\t{{.Image}}")
+    if [[ -z "$container_list" ]]; then
+        echo "Не найдено ни одного контейнера." >&2
+        return 0
+    fi
+
+    container=$(echo "$container_list" | fzf --height 40% --reverse --header "Выберите контейнер для просмотра логов:")
+    
+    # Если был выбран контейнер (а не нажата клавиша Esc)
     if [[ -n "$container" ]]; then
+        # Извлекаем ID контейнера из выбранной строки
         local container_id
         container_id=$(echo "$container" | awk '{print $1}')
+        
+        # Передаем все аргументы, полученные функцией (например, -f, --tail), команде docker logs.
+        # "$@" - это ключ к работе этой функции.
         docker logs "$@" "$container_id"
     fi
 }
+
 
 # Интерактивно переключиться на другой Terraform workspace.
 # Требует: terraform, fzf
