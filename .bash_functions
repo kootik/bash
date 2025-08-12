@@ -500,18 +500,7 @@ gnewbranch() {
     git checkout -b "$1" && git push -u origin "$1"
 }
 
-# Интерактивный rebase на выбранный коммит из лога.
-# Пример: gfr
-gfr() {
-    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
 
-    local commit
-    commit=$(git log --oneline --color=always | fzf --ansi --preview 'git show --color=always {+1}' | awk '{print $1}')
-
-    if [ -n "$commit" ]; then
-        git rebase -i "$commit"
-    fi
-}
 
 # Удаляет локальные ветки, которые уже были слиты в основную ветку.
 # Пример: gprune
@@ -836,6 +825,19 @@ wfile() {
     local file="$1"
     shift
     watch -n 1 -d -- "$@" "$file"
+}
+
+# Интерактивный rebase на выбранный коммит из лога.
+# Пример: gfr
+gfr() {
+    if ! command -v fzf &>/dev/null; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+
+    local commit
+    commit=$(git log --oneline --color=always | fzf --ansi --preview 'git show --color=always {+1}' | awk '{print $1}')
+
+    if [ -n "$commit" ]; then
+        git rebase -i "$commit"
+    fi
 }
 # Интерактивно переключить текущее пространство имен (namespace).
 # Пример: kns (появится список для выбора)
