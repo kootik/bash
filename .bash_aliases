@@ -188,7 +188,7 @@ alias fgrep='fgrep --color=auto' # Варианты `grep` с автоматич
 alias bashrc='${EDITOR:-nano} ~/.bashrc'       # Открывает .bashrc для редактирования.
 alias aliases='${EDITOR:-nano} ~/.bash_aliases' # Открывает этот файл для редактирования.
 alias funcs='${EDITOR:-nano} ~/.bash_functions' # Открывает файл с функциями bash.
-alias exports='${EDITOR:-nano} ~/.bash_exports' # Открывает файл с переменными окружения.
+alias exports='${EDITOR:-nano} ~/.bash_export' # Открывает файл с переменными окружения.
 
 # -- Перезагрузка конфигурации и работа с sudo --
 alias reload='source ~/.bashrc && echo "Конфигурация Bash перезагружена!"' # Перезагружает конфигурацию Bash для текущей сессии.
