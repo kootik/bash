@@ -8,12 +8,7 @@
 [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && PATH="$HOME/.local/bin:$PATH"
 
 # --- Настройки истории команд ---
-HISTSIZE=$((1024 * 1024))               # Очень большой размер истории в памяти
-HISTFILESIZE=$HISTSIZE                  # Очень большой размер файла истории
-HISTTIMEFORMAT='%F %T '                 # Добавлять временную метку к каждой команде
-HISTCONTROL=ignoreboth                  # Не сохранять дубликаты и команды, начинающиеся с пробела
-HISTIGNORE="ls:bg:fg:history"           # Не сохранять эти команды в истории
-shopt -s histappend                     # Добавлять в файл истории, а не перезаписывать его
+
 
 # --- Редакторы и пейджеры ---
 export EDITOR='nano'
