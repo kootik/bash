@@ -136,18 +136,18 @@ cleanup_eternal_history() {
     # Если результат не пустой, заменяем оригинальный файл.
     if [[ -s "$temp_file" ]]; then
         # Используем `cp` и `rm` вместо `mv` для сохранения символических ссылок и прав.
-        if cp -f "$temp_file" "$eternal_history_file"; then
-            rm -f "$temp_file"
+        if command cp -f "$temp_file" "$eternal_history_file"; then
+            command rm -f "$temp_file"
             local removed_count=$((original_lines - final_lines))
             printf "Очистка завершена. Удалено %d дубликатов.\n" "$removed_count"
         else
             printf "Ошибка: не удалось скопировать временный файл. Оригинальный файл не изменен.\n" >&2
-            rm -f "$temp_file"
+            command rm -f "$temp_file"
             return 1
         fi
     else
         printf "Ошибка: временный файл пуст после обработки. Оригинальный файл истории не изменен.\n" >&2
-        rm -f "$temp_file"
+        command rm -f "$temp_file"
         return 1
     fi
 }
@@ -212,8 +212,8 @@ sshb() {
             "${ssh_cmd[@]}" -O exit "$hostname" &>/dev/null
         fi
         # 4. Удалить временные файлы
-        [[ -n "$temp_bundle" ]] && rm -f "$temp_bundle"
-        rm -rf "$tmp_dir"
+        [[ -n "$temp_bundle" ]] && command command cp -f-f "$temp_bundle"
+        command rm -rf "$tmp_dir"
     }
     
     # trap теперь нужен в основном для аварийного выхода (Ctrl+C)
@@ -249,7 +249,7 @@ _REMOTE_HISTORY_FILE="$HOME/.$USER.bash-ssh.history"
 
 # Функция очистки удаленных файлов, которая сработает при выходе из удаленной сессии.
 _remote_cleanup() {
-    rm -f "$_REMOTE_SCRIPT_FILE" "$_REMOTE_HISTORY_FILE"
+    command rm -f "$_REMOTE_SCRIPT_FILE" "$_REMOTE_HISTORY_FILE"
 }
 trap _remote_cleanup EXIT
 
@@ -300,7 +300,7 @@ EOF
         printf "Ошибка: не удалось подготовить удаленный хост.\n" >&2
         return 1
     fi
-    rm -f "$temp_bundle"; temp_bundle=""
+    command rm -f "$temp_bundle"; temp_bundle=""
 
     # Запускаем удаленный tail с уникальной меткой
     "${ssh_cmd[@]}" -n "${remaining_args[@]}" "exec -a '${listener_tag}' tail -f \"\$HOME/.\$USER.bash-ssh.history\" 2>/dev/null" | while read -r; do echo "$REPLY" >> ~/.bash_eternal_history; done &
@@ -398,11 +398,11 @@ _manage_local_history() {
     awk '{a[NR]=$0; b[$0]=NR} END{for(i=1;i<=NR;i++)if(b[a[i]]==i)print a[i]}' "$HISTFILE" > "$hist_tmp"
     
     # Используем `cp` и `rm` вместо `mv` для сохранения символических ссылок.
-    if cp "$hist_tmp" "$HISTFILE"; then
-        rm -f "$hist_tmp"
+    if command cp -f "$hist_tmp" "$HISTFILE"; then
+        command rm -f "$hist_tmp"
     else
         printf "Внимание: не удалось обновить файл истории '%s'.\n" "$HISTFILE" >&2
-        rm -f "$hist_tmp"
+        command rm -f "$hist_tmp"
     fi
 
     # 3. Очищаем историю в памяти и читаем ее заново из очищенного файла.
@@ -457,7 +457,7 @@ if [[ -z "${SSHB_SESSION:-}" ]]; then
     if find ~/.ssh -type f -name 'id_*' ! -name '*.pub' -print -quit 2>/dev/null | grep -q .; then
         export SSH_AUTH_SOCK=~/.ssh/agent
         if command -v pgrep &>/dev/null && ! pgrep -f "ssh-agent.*$SSH_AUTH_SOCK" >/dev/null 2>&1; then
-            rm -f "$SSH_AUTH_SOCK"
+            command rm -f "$SSH_AUTH_SOCK"
             ssh-agent -a "$SSH_AUTH_SOCK" &>/dev/null
         fi
         if ! ssh-add -l >/dev/null; then
