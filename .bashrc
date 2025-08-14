@@ -5,6 +5,7 @@
 #
 # =============================================================================
 #            ФИНАЛЬНАЯ ВЕРСИЯ, СОВМЕСТИМАЯ С TMUX И SSHB
+#              (с улучшениями от 2024-08-13)
 # =============================================================================
 #
 # Этот скрипт создает мощную и унифицированную среду командной строки,
@@ -49,13 +50,14 @@ fi
 # --- ОПРЕДЕЛЕНИЕ КЛЮЧЕВЫХ ФУНКЦИЙ ---
 
 # --- Функция для записи в "вечную" историю (ТОЛЬКО ЛОКАЛЬНО) ---
-# Эта функция выполняется в локальном терминале перед каждой командой.
+# ИЗМЕНЕНО: Добавлена обработка многострочных команд и санитизация данных.
 update_eternal_history() {
-    # Получаем текст последней выполненной команды.
-    local last_command
-    # ИЗМЕНЕНО: Добавлена проверка на случай, если fc ничего не вернет.
-    last_command=$(fc -ln -1 2>/dev/null | sed 's/^[ \t]*//') || return
+    local last_command history_target
+    history_target="${HOME}/.bash_eternal_history"
 
+    # Улучшенная обработка многострочных команд: объединяем их в одну строку.
+    last_command=$(fc -ln -1 2>/dev/null | tr '\n' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') || return
+    
     # Улучшенная фильтрация: пустые команды, дубликаты и `history` с опциями
     if [[ -z "$last_command" || "$last_command" == "$_ETERNAL_HISTORY_LAST_CMD" || "$last_command" =~ ^[[:space:]]*history([[:space:]]|$) ]]; then
         return
@@ -64,13 +66,13 @@ update_eternal_history() {
     # Запоминаем последнюю команду, чтобы избежать дубликатов при повторном вызове.
     _ETERNAL_HISTORY_LAST_CMD="$last_command"
 
-    # Формируем строку лога с датой, пользователем, хостом, каталогом и командой.
-    local log_line
-    log_line="$(date '+%F %T')\t${USER}@${HOSTNAME}\t${PWD}\t${last_command}"
+    # УЛУЧШЕНИЕ: Санитизация пути и команды для безопасной записи в лог.
+    # Это предотвращает проблемы, если в пути или команде есть символ табуляции.
+    local sanitized_pwd sanitized_cmd log_line
+    sanitized_pwd=$(printf '%s' "$PWD" | tr -d '\0' | sed 's/\t/ /g')
+    sanitized_cmd=$(printf '%s' "$last_command" | tr -d '\0' | sed 's/\t/ /g')
+    log_line="$(date '+%F %T')\t${USER}@${HOSTNAME}\t${sanitized_pwd}\t${sanitized_cmd}"
 
-    # Указываем путь к файлу вечной истории.
-    local history_target="${HOME}/.bash_eternal_history"
-    
     # Устанавливаем безопасные права на файл (только для владельца) и дописываем строку.
     local old_umask
     old_umask=$(umask)
@@ -191,20 +193,30 @@ sshb() {
     local control_socket="${tmp_dir}/control-socket"
     # Используем массив для команды `ssh` для корректной обработки путей с пробелами.
     local ssh_cmd=(ssh "${identity_opts[@]}" -S "$control_socket")
-    local temp_bundle
-    local hostname
+    local temp_bundle hostname tail_pid
+    local listener_tag="sshb_listener_$$"
+    local cleanup_done=0
 
-    # --- Функция очистки ЛОКАЛЬНЫХ ресурсов ---
-    # Гарантирует, что все временные файлы и сокеты на локальной машине будут удалены.
+    # ИСПРАВЛЕНИЕ v3: Функция очистки с защитой от двойного запуска.
     _sshb_local_cleanup() {
-        [[ -n "$temp_bundle" ]] && rm -f "$temp_bundle"
+        # Защита от повторного выполнения
+        if (( cleanup_done == 1 )); then return; fi
+        cleanup_done=1
+
+        # 1. Убить удаленный процесс-слушатель
+        "${ssh_cmd[@]}" "${remaining_args[@]}" "pkill -f '$listener_tag' &>/dev/null"
+        # 2. Убить локальный процесс-слушатель
+        [[ -n "$tail_pid" ]] && kill "$tail_pid" &>/dev/null
+        # 3. Закрыть мастер-соединение
         if [[ -n "$hostname" ]]; then
             "${ssh_cmd[@]}" -O exit "$hostname" &>/dev/null
         fi
+        # 4. Удалить временные файлы
+        [[ -n "$temp_bundle" ]] && rm -f "$temp_bundle"
         rm -rf "$tmp_dir"
     }
     
-    # Устанавливаем ловушку, которая сработает при любом завершении `sshb` (штатном или аварийном).
+    # trap теперь нужен в основном для аварийного выхода (Ctrl+C)
     trap _sshb_local_cleanup EXIT HUP INT TERM
 
     # --- 2. Надёжное определение хоста ---
@@ -225,6 +237,7 @@ sshb() {
     # КРИТИЧЕСКИ ВАЖНО: Используем `\$USER`, чтобы переменная раскрылась на УДАЛЕННОМ сервере.
     cat << 'EOF' > "$temp_bundle"
 #!/usr/bin/env bash
+export SSHB_SESSION=1
 # --- Специальный блок для удаленной сессии sshb ---
 
 # Инициализируем переменную для предотвращения дублирования
@@ -243,7 +256,8 @@ trap _remote_cleanup EXIT
 # Упрощенная функция для отправки "сырой" истории на локальную машину.
 _remote_send_history() {
     local last_command
-    last_command=$(fc -ln -1 2>/dev/null | sed 's/^[ \t]*//')
+    # УЛУЧШЕНИЕ: Обрабатываем многострочные команды и на удаленном хосте.
+    last_command=$(fc -ln -1 2>/dev/null | tr '\n' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     
     # УЛУЧШЕННАЯ ФИЛЬТРАЦИЯ: пустые команды, дубликаты и `history` с опциями
     if [[ -z "$last_command" || "$last_command" == "$_REMOTE_HISTORY_LAST_CMD" || "$last_command" =~ ^[[:space:]]*history([[:space:]]|$) ]]; then
@@ -253,9 +267,12 @@ _remote_send_history() {
     # Запоминаем последнюю отправленную команду
     _REMOTE_HISTORY_LAST_CMD="$last_command"
 
-    # Формируем строку и отправляем ее в специальный канал (pipe).
-    local log_line
-    log_line="$(date '+%F %T')\t${USER}@${HOSTNAME}\t${PWD}\t${last_command}"
+    # УЛУЧШЕНИЕ: Санитизация данных перед отправкой.
+    local sanitized_pwd sanitized_cmd log_line
+    sanitized_pwd=$(printf '%s' "$PWD" | tr -d '\0' | sed 's/\t/ /g')
+    sanitized_cmd=$(printf '%s' "$last_command" | tr -d '\0' | sed 's/\t/ /g')
+    log_line="$(date '+%F %T')\t${USER}@${HOSTNAME}\t${sanitized_pwd}\t${sanitized_cmd}"
+
     (trap '' PIPE; echo -e "$log_line" > "$_REMOTE_HISTORY_FILE") 2>/dev/null || true
 }
 # --- Конец специального блока ---
@@ -285,14 +302,20 @@ EOF
     fi
     rm -f "$temp_bundle"; temp_bundle=""
 
-    # --- 6. ПОТОМ запускаем локальный "слушатель" истории ---
-    # Он читает данные из канала на сервере и дописывает их в локальную вечную историю.
-    "${ssh_cmd[@]}" -n "${remaining_args[@]}" 'tail -f "$HOME/.$USER.bash-ssh.history" 2>/dev/null' | while read -r; do echo "$REPLY" >> ~/.bash_eternal_history; done &
+    # Запускаем удаленный tail с уникальной меткой
+    "${ssh_cmd[@]}" -n "${remaining_args[@]}" "exec -a '${listener_tag}' tail -f \"\$HOME/.\$USER.bash-ssh.history\" 2>/dev/null" | while read -r; do echo "$REPLY" >> ~/.bash_eternal_history; done &
+    tail_pid=$!
 
     # --- 7. Запуск интерактивной сессии ---
     # Запускаем `bash` на сервере, принудительно используя наш "пакет" в качестве конфигурации.
     # КРИТИЧЕСКИ ИСПРАВЛЕНО: `--rcfile` и `-i` теперь передаются как отдельные аргументы.
     "${ssh_cmd[@]}" -t "${remaining_args[@]}" 'chmod +x "$HOME/.$USER.bash-ssh"; exec bash --rcfile "$HOME/.$USER.bash-ssh" -i'
+
+    # ИСПРАВЛЕНИЕ v3: Явный вызов очистки ПОСЛЕ завершения интерактивной сессии
+    _sshb_local_cleanup
+
+    # Отключаем trap, чтобы он не сработал второй раз при штатном выходе
+    trap - EXIT HUP INT TERM
 }
 
 # --- Функция для автоматической настройки псевдонимов пакетных менеджеров ---
@@ -307,7 +330,7 @@ setup_os_aliases() {
     elif [[ -f /etc/os-release ]]; then
         # ИЗМЕНЕНО: `.` заменен на `source` для большей ясности.
         source /etc/os-release
-        case "${ID:-}" in # Добавлено `:-` для защиты от `set -u`
+        case "${ID:-}" in
             ubuntu|debian|mint)
                 alias update='sudo apt update && sudo apt full-upgrade -y'
                 alias install='sudo apt install -y'
@@ -395,9 +418,9 @@ _manage_local_history() {
 #  Раздел 3: Конфигурация ТОЛЬКО для ИНТЕРАКТИВНЫХ сессий
 # =============================================================================
 
-# Логика для интеграции sshb и tmux.
-# КРИТИЧЕСКИ ВАЖНО: Используем `$USER`, а не `$LOGNAME`.
-if [[ -n "${SSH_TTY:-}" ]] && [[ -f "$HOME/.$USER.bash-ssh" ]]; then
+# ИЗМЕНЕНИЕ: Используем переменную окружения SSHB_SESSION для определения типа сессии.
+# Это более надежно, чем проверка на существование файла.
+if [[ -n "${SSHB_SESSION:-}" ]]; then
     # --- ЭТО УДАЛЕННАЯ СЕССИЯ SSHB ---
     export SHELL="$HOME/.$USER.bash-ssh"
     
@@ -427,16 +450,19 @@ setup_os_aliases
 command -v rbenv &>/dev/null && eval "$(rbenv init -)"
 command -v pyenv &>/dev/null && eval "$(pyenv init -)"
 
-# --- Улучшенная настройка SSH Agent ---
-if find ~/.ssh -type f -name 'id_*' ! -name '*.pub' -print -quit 2>/dev/null | grep -q .; then
-    export SSH_AUTH_SOCK=~/.ssh/agent
-    # Проверяем наличие `pgrep` перед использованием.
-    if command -v pgrep &>/dev/null && ! pgrep -f "ssh-agent.*$SSH_AUTH_SOCK" >/dev/null 2>&1; then
-        rm -f "$SSH_AUTH_SOCK"
-        ssh-agent -a "$SSH_AUTH_SOCK" &>/dev/null
-    fi
-    if ! ssh-add -l >/dev/null; then
-        ssh-add &>/dev/null
+# ИСПРАВЛЕНИЕ: Следующие блоки теперь выполняются ТОЛЬКО в локальной сессии
+if [[ -z "${SSHB_SESSION:-}" ]]; then
+
+    # --- Улучшенная настройка SSH Agent (ТОЛЬКО ЛОКАЛЬНО) ---
+    if find ~/.ssh -type f -name 'id_*' ! -name '*.pub' -print -quit 2>/dev/null | grep -q .; then
+        export SSH_AUTH_SOCK=~/.ssh/agent
+        if command -v pgrep &>/dev/null && ! pgrep -f "ssh-agent.*$SSH_AUTH_SOCK" >/dev/null 2>&1; then
+            rm -f "$SSH_AUTH_SOCK"
+            ssh-agent -a "$SSH_AUTH_SOCK" &>/dev/null
+        fi
+        if ! ssh-add -l >/dev/null; then
+            ssh-add &>/dev/null
+        fi
     fi
 fi
 
@@ -462,8 +488,8 @@ if ! shopt -oq posix; then
 fi
 
 # --- Финальное сообщение о загрузке ---
-# Используем `printf` для единообразия и надежности.
-if [[ -n "${SSH_TTY:-}" ]] && [[ -f "$HOME/.$USER.bash-ssh" ]]; then
+# ИЗМЕНЕНИЕ: Используем новую проверку для вывода правильного сообщения.
+if [[ -n "${SSHB_SESSION:-}" ]]; then
     printf ">> Удаленное окружение sshb для %s@%s успешно загружено.\n" "${USER}" "${HOSTNAME}"
 else
     printf ">> Локальная конфигурация Bash успешно загружена.\n"
