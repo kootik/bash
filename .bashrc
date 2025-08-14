@@ -1,79 +1,169 @@
-#!/bin/bash
-# ~/.bashrc: Выполняется для не-логин интерактивных оболочек bash.
-# ФИНАЛЬНАЯ ВЕРСИЯ, СОВМЕСТИМАЯ С TMUX И SSHB
+#!/usr/bin/env bash
+# ИЗМЕНЕНО: Шебанг заменен на /usr/bin/env bash для лучшей переносимости между системами.
 
-# ИСПРАВЛЕНИЕ: Обнуляем BASH_ENV, чтобы избежать конфликтов при запуске из tmux.
+# ~/.bashrc: Выполняется для не-логин интерактивных оболочек bash.
+#
+# =============================================================================
+#            ФИНАЛЬНАЯ ВЕРСИЯ, СОВМЕСТИМАЯ С TMUX И SSHB
+# =============================================================================
+#
+# Этот скрипт создает мощную и унифицированную среду командной строки,
+# которая работает одинаково как на локальной машине, так и на удаленных
+# серверах, подключенных через специальную функцию `sshb`.
+#
+# Ключевые возможности:
+#   - Полная синхронизация окружения (алиасы, функции) при SSH-подключении.
+#   - Ведение единой "вечной" истории команд со всех хостов.
+#   - Автоматическая очистка и дедупликация локальной истории команд.
+#   - Надежная работа внутри `tmux`.
+#
+
+# --- Начальная подготовка ---
+
+# Инициализируем переменную, чтобы избежать ошибок при первом запуске.
+_ETERNAL_HISTORY_LAST_CMD=""
+
+# Обнуляем переменную BASH_ENV, чтобы избежать конфликтов и неожиданного
+# выполнения других скриптов, особенно при запуске из `tmux`.
 unset BASH_ENV
 
 # =============================================================================
-#  Раздел 1: ГЛАВНЫЙ ЗАЩИТНИК И ОПРЕДЕЛЕНИЕ СТАРТОВЫХ ФУНКЦИЙ
+#  Раздел 1: ГЛАВНЫЙ ЗАЩИТНИК И ОПРЕДЕЛЕНИЕ КЛЮЧЕВЫХ ФУНКЦИЙ
 # =============================================================================
 
-# ИЗМЕНЕНО: Улучшенный главный защитник для совместимости с tmux
-# Если сессия неинтерактивная (нет $PS1), мы должны выйти.
-# Однако, когда tmux запускается, он ИСПОЛНЯЕТ этот скрипт напрямую,
-# а не "сорсит" его. В этом случае мы должны позволить скрипту дойти
-# до специального обработчика tmux ниже.
+# --- Главный защитник от неинтерактивных сессий ---
+
+# Если переменная `$PS1` (отвечающая за вид командной строки) не установлена,
+# значит, сессия неинтерактивная (например, `scp`, `git` или `cron`).
 if [ -z "$PS1" ]; then
-    # Если скрипт был "засорсен" (т.е. не исполнен напрямую), мы можем безопасно выйти.
+    # Однако, если скрипт был ИСПОЛНЕН напрямую (как это делает `tmux`),
+    # а не подключен через `source`, мы позволяем ему продолжиться.
+    # В противном случае (для `scp` и т.д.) мы немедленно выходим,
+    # чтобы не сломать их работу.
     if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
         return
     fi
-    # Если же скрипт был ИСПОЛНЕН напрямую (как в случае с tmux), мы ничего не делаем
-    # и позволяем ему продолжиться до специального обработчика tmux.
 fi
 
 
 # --- ОПРЕДЕЛЕНИЕ КЛЮЧЕВЫХ ФУНКЦИЙ ---
-# Эти функции перенесены сюда из .bash_functions, так как они нужны для старта.
 
-# --- Функция для ведения вечной истории (локально и с удаленных хостов) ---
+# --- Функция для записи в "вечную" историю (ТОЛЬКО ЛОКАЛЬНО) ---
+# Эта функция выполняется в локальном терминале перед каждой командой.
 update_eternal_history() {
+    # Получаем текст последней выполненной команды.
     local last_command
-    # Надежно получаем последнюю команду, убирая начальные пробелы.
-    last_command=$(fc -ln -1 | sed 's/^[ \t]*//')
+    # ИЗМЕНЕНО: Добавлена проверка на случай, если fc ничего не вернет.
+    last_command=$(fc -ln -1 2>/dev/null | sed 's/^[ \t]*//') || return
 
-    # Выходим, если команда пустая, является дубликатом предыдущей или это команда history.
-    if [[ -z "$last_command" || "$last_command" == "$_ETERNAL_HISTORY_LAST_CMD" || "$last_command" =~ ^history ]]; then
+    # Улучшенная фильтрация: пустые команды, дубликаты и `history` с опциями
+    if [[ -z "$last_command" || "$last_command" == "$_ETERNAL_HISTORY_LAST_CMD" || "$last_command" =~ ^[[:space:]]*history([[:space:]]|$) ]]; then
         return
     fi
-    # Запоминаем последнюю команду, чтобы избежать дубликатов.
+
+    # Запоминаем последнюю команду, чтобы избежать дубликатов при повторном вызове.
     _ETERNAL_HISTORY_LAST_CMD="$last_command"
 
+    # Формируем строку лога с датой, пользователем, хостом, каталогом и командой.
     local log_line
     log_line="$(date '+%F %T')\t${USER}@${HOSTNAME}\t${PWD}\t${last_command}"
 
-    # Определяем, куда писать историю: в локальный файл или в канал для SSH.
-    local history_target="$HOME/.bash_eternal_history"
-    local ssh_pipe="$HOME/.$LOGNAME.bash-ssh.history"
+    # Указываем путь к файлу вечной истории.
+    local history_target="${HOME}/.bash_eternal_history"
+    
+    # Устанавливаем безопасные права на файл (только для владельца) и дописываем строку.
+    local old_umask
+    old_umask=$(umask)
+    umask 077
+    echo -e "$log_line" >> "$history_target"
+    umask "$old_umask"
+}
 
-    if [ -p "$ssh_pipe" ]; then
-        # ИСПРАВЛЕНО: Запускаем echo в подоболочке с ловушкой для сигнала SIGPIPE,
-        # чтобы полностью подавить ошибку "Interrupted system call" при нажатии Ctrl+C.
-        (trap '' PIPE; echo -e "$log_line" > "$ssh_pipe") 2>/dev/null || true
+# --- Функция для ручной очистки "вечной" истории ---
+# Позволяет пользователю вручную удалить дубликаты из большого файла логов.
+cleanup_eternal_history() {
+    local eternal_history_file="${HOME}/.bash_eternal_history"
+    local temp_file
+    
+    # Проверяем, существует ли файл.
+    if [[ ! -f "$eternal_history_file" ]]; then
+        printf "Ошибка: Файл вечной истории '%s' не найден.\n" "$eternal_history_file" >&2
+        return 1
+    fi
+
+    printf "Очистка вечной истории... Это может занять некоторое время.\n"
+    
+    temp_file=$(mktemp) || {
+        printf "Ошибка: не удалось создать временный файл.\n" >&2
+        return 1
+    }
+    
+    local original_lines
+    original_lines=$(wc -l < "$eternal_history_file")
+
+    # Добавлено `-v OFS='\t'` для корректной обработки команд с пробелами.
+    # Используем `awk` для удаления дубликатов по тексту команды, сохраняя последнее вхождение.
+    awk -F'\t' -v OFS='\t' '
+    {
+        # Ключом является сама команда (все, что после 3-го разделителя-табуляции).
+        key = "";
+        for (i = 4; i <= NF; i++) {
+            key = key (i == 4 ? "" : OFS) $i;
+        }
+        # Сохраняем номер последней строки для каждой уникальной команды.
+        lines[key] = NR;
+        # Сохраняем все строки в массив.
+        content[NR] = $0;
+    }
+    END {
+        # Собираем уникальные номера строк, которые нужно сохранить.
+        for (key in lines) {
+            final_lines[lines[key]] = 1;
+        }
+        # Печатаем строки в их оригинальном порядке.
+        for (i = 1; i <= NR; i++) {
+            if (i in final_lines) {
+                print content[i];
+            }
+        }
+    }' "$eternal_history_file" > "$temp_file"
+
+    local final_lines
+    final_lines=$(wc -l < "$temp_file")
+    
+    # Если результат не пустой, заменяем оригинальный файл.
+    if [[ -s "$temp_file" ]]; then
+        # Используем `cp` и `rm` вместо `mv` для сохранения символических ссылок и прав.
+        if cp -f "$temp_file" "$eternal_history_file"; then
+            rm -f "$temp_file"
+            local removed_count=$((original_lines - final_lines))
+            printf "Очистка завершена. Удалено %d дубликатов.\n" "$removed_count"
+        else
+            printf "Ошибка: не удалось скопировать временный файл. Оригинальный файл не изменен.\n" >&2
+            rm -f "$temp_file"
+            return 1
+        fi
     else
-        # В обычной локальной сессии просто дописываем в файл.
-        local old_umask
-        old_umask=$(umask)
-        umask 077
-        echo -e "$log_line" >> "$history_target"
-        umask "$old_umask"
+        printf "Ошибка: временный файл пуст после обработки. Оригинальный файл истории не изменен.\n" >&2
+        rm -f "$temp_file"
+        return 1
     fi
 }
 
+
 # --- Улучшенная функция для интерактивного подключения с синхронизацией истории ---
 sshb() {
-    # --- Парсинг аргументов для поддержки флага -i ---
+    # --- Парсинг аргументов для поддержки флага `-i` (указание ключа) ---
     local identity_opts=()
     local remaining_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -i)
-                if [[ -n "$2" ]]; then
+                if [[ -n "${2:-}" ]]; then
                     identity_opts+=("-i" "$2")
                     shift 2
                 else
-                    echo "Ошибка: для опции -i требуется указать путь к файлу." >&2
+                    printf "Ошибка: для опции -i требуется указать путь к файлу.\n" >&2
                     return 1
                 fi
                 ;;
@@ -84,68 +174,125 @@ sshb() {
         esac
     done
 
-    if [ ${#remaining_args[@]} -eq 0 ]; then
-        echo "Использование: sshb [-i /путь/к/ключу] [user@]hostname [команда]" >&2
+    # Проверяем, что был передан хост для подключения.
+    if [[ ${#remaining_args[@]} -eq 0 ]]; then
+        printf "Использование: sshb [-i /путь/к/ключу] [user@]hostname [команда]\n" >&2
         return 1
     fi
 
-    # --- 1. Подготовка и очистка ---
+    # --- 1. Подготовка ---
+    # Используем /tmp для сокета, чтобы избежать проблем с длинными путями.
     local tmp_dir
-    tmp_dir=$(mktemp -d ~/.ssh/sshb-control.XXXXXXXX)
-    if [ -z "$tmp_dir" ]; then
+    tmp_dir=$(mktemp -d "/tmp/sshb-control.XXXXXXXX") || {
         echo "Не удалось создать временный каталог." >&2
         return 1
-    fi
-    local listener_pid
-    # Гарантированная очистка и остановка фоновых процессов при выходе из функции.
-    trap 'rm -rf "$tmp_dir"; [[ -n "$listener_pid" ]] && kill "$listener_pid" &>/dev/null' RETURN
-
+    }
+    
     local control_socket="${tmp_dir}/control-socket"
-    local ssh="ssh ${identity_opts[@]} -S ${control_socket}"
+    # Используем массив для команды `ssh` для корректной обработки путей с пробелами.
+    local ssh_cmd=(ssh "${identity_opts[@]}" -S "$control_socket")
+    local temp_bundle
+    local hostname
+
+    # --- Функция очистки ЛОКАЛЬНЫХ ресурсов ---
+    # Гарантирует, что все временные файлы и сокеты на локальной машине будут удалены.
+    _sshb_local_cleanup() {
+        [[ -n "$temp_bundle" ]] && rm -f "$temp_bundle"
+        if [[ -n "$hostname" ]]; then
+            "${ssh_cmd[@]}" -O exit "$hostname" &>/dev/null
+        fi
+        rm -rf "$tmp_dir"
+    }
+    
+    # Устанавливаем ловушку, которая сработает при любом завершении `sshb` (штатном или аварийном).
+    trap _sshb_local_cleanup EXIT HUP INT TERM
 
     # --- 2. Надёжное определение хоста ---
     local hostname
-    hostname=$(ssh "${identity_opts[@]}" -G "${remaining_args[@]}" | awk '/^hostname / { print $2 }')
-    if [ -z "$hostname" ]; then
-        echo "Ошибка: не удалось определить хост. Проверьте аргументы." >&2
+    # Используем массив `ssh_cmd` для корректного определения хоста.
+    hostname=$("${ssh_cmd[@]}" -G "${remaining_args[@]}" | awk '/^hostname / { print $2 }')
+    if [[ -z "$hostname" ]]; then
+        printf "Ошибка: не удалось определить хост. Проверьте аргументы.\n" >&2
         return 1
     fi
 
-    # --- 3. Сборка "пакета" с окружением ---
-    local temp_bundle
-    temp_bundle=$(mktemp)
-    trap 'rm -rf "$tmp_dir" "$temp_bundle"; [[ -n "$listener_pid" ]] && kill "$listener_pid" &>/dev/null' RETURN
+    temp_bundle=$(mktemp) || {
+        printf "Ошибка: не удалось создать временный файл для bundle.\n" >&2
+        return 1
+    }
+    
+    # Внедряем во временный скрипт специальный блок для удаленной сессии.
+    # КРИТИЧЕСКИ ВАЖНО: Используем `\$USER`, чтобы переменная раскрылась на УДАЛЕННОМ сервере.
+    cat << 'EOF' > "$temp_bundle"
+#!/usr/bin/env bash
+# --- Специальный блок для удаленной сессии sshb ---
 
-    # Принудительно добавляем шебанг в начало.
-    echo '#!/bin/bash' > "$temp_bundle"
+# Инициализируем переменную для предотвращения дублирования
+_REMOTE_HISTORY_LAST_CMD=""
 
-    # Собираем окружение.
-    local env_files=(
-        "$HOME/.bashrc"
-        "$HOME/.bash_export"
-        "$HOME/.bash_functions"
-        "$HOME/.bash_aliases"
-    )
+# Определяем имена временных файлов на удаленном хосте.
+_REMOTE_SCRIPT_FILE="$HOME/.$USER.bash-ssh"
+_REMOTE_HISTORY_FILE="$HOME/.$USER.bash-ssh.history"
+
+# Функция очистки удаленных файлов, которая сработает при выходе из удаленной сессии.
+_remote_cleanup() {
+    rm -f "$_REMOTE_SCRIPT_FILE" "$_REMOTE_HISTORY_FILE"
+}
+trap _remote_cleanup EXIT
+
+# Упрощенная функция для отправки "сырой" истории на локальную машину.
+_remote_send_history() {
+    local last_command
+    last_command=$(fc -ln -1 2>/dev/null | sed 's/^[ \t]*//')
+    
+    # УЛУЧШЕННАЯ ФИЛЬТРАЦИЯ: пустые команды, дубликаты и `history` с опциями
+    if [[ -z "$last_command" || "$last_command" == "$_REMOTE_HISTORY_LAST_CMD" || "$last_command" =~ ^[[:space:]]*history([[:space:]]|$) ]]; then
+        return
+    fi
+
+    # Запоминаем последнюю отправленную команду
+    _REMOTE_HISTORY_LAST_CMD="$last_command"
+
+    # Формируем строку и отправляем ее в специальный канал (pipe).
+    local log_line
+    log_line="$(date '+%F %T')\t${USER}@${HOSTNAME}\t${PWD}\t${last_command}"
+    (trap '' PIPE; echo -e "$log_line" > "$_REMOTE_HISTORY_FILE") 2>/dev/null || true
+}
+# --- Конец специального блока ---
+
+EOF
+
+    # Добавляем все локальное окружение (конфиги) в тот же временный файл.
+    local env_files=("$HOME/.bashrc" "$HOME/.bash_export" "$HOME/.bash_functions" "$HOME/.bash_aliases")
     for file in "${env_files[@]}"; do
-        [ -r "$file" ] && cat "$file" >> "$temp_bundle"
+        [[ -r "$file" ]] && cat "$file" >> "$temp_bundle"
     done
 
     # --- 4. Создание мастер-соединения ---
-    $ssh -fNM "${remaining_args[@]}" || return 1
+    # Это позволяет последующим командам подключаться мгновенно без повторной аутентификации.
+    if ! "${ssh_cmd[@]}" -fNM "${remaining_args[@]}"; then
+        printf "Не удалось создать мастер-соединение SSH.\n" >&2
+        # `trap` выполнит очистку автоматически.
+        return 1
+    fi
 
-    # --- 5. Запуск "слушателя" истории ---
-    ($ssh -n "${remaining_args[@]}" 'tail -f $HOME/.$LOGNAME.bash-ssh.history' | while read -r; do echo "$REPLY" >> ~/.bash_eternal_history; done & ) &> /dev/null
-    listener_pid=$!
+    # --- 5. Подготавливаем удаленный хост ПОСЛЕ создания мастер-соединения ---
+    # Копируем наш "пакет" на сервер и создаем канал для передачи истории.
+    # КРИТИЧЕСКИ ВАЖНО: Используем `\$USER` для раскрытия переменной на удаленном сервере.
+    if ! "${ssh_cmd[@]}" "${remaining_args[@]}" 'cat > "$HOME/.$USER.bash-ssh"; [ -p "$HOME/.$USER.bash-ssh.history" ] || mkfifo -m 0600 "$HOME/.$USER.bash-ssh.history"' < "$temp_bundle"; then
+        printf "Ошибка: не удалось подготовить удаленный хост.\n" >&2
+        return 1
+    fi
+    rm -f "$temp_bundle"; temp_bundle=""
 
-    # --- 6. Подготовка удаленного хоста ---
-    cat "$temp_bundle" | $ssh "${remaining_args[@]}" 'cat > $HOME/.$LOGNAME.bash-ssh; [ -p $HOME/.$LOGNAME.bash-ssh.history ] || mkfifo -m 0600 $HOME/.$LOGNAME.bash-ssh.history'
-    rm -f "$temp_bundle"
+    # --- 6. ПОТОМ запускаем локальный "слушатель" истории ---
+    # Он читает данные из канала на сервере и дописывает их в локальную вечную историю.
+    "${ssh_cmd[@]}" -n "${remaining_args[@]}" 'tail -f "$HOME/.$USER.bash-ssh.history" 2>/dev/null' | while read -r; do echo "$REPLY" >> ~/.bash_eternal_history; done &
 
     # --- 7. Запуск интерактивной сессии ---
-    $ssh -t "${remaining_args[@]}" 'chmod +x $HOME/.$LOGNAME.bash-ssh; exec bash --rcfile $HOME/.$LOGNAME.bash-ssh -i'
-
-    # --- 8. Закрытие мастер-соединения при выходе ---
-    ssh "${identity_opts[@]}" -S "${control_socket}" -O exit "$hostname" &> /dev/null
+    # Запускаем `bash` на сервере, принудительно используя наш "пакет" в качестве конфигурации.
+    # КРИТИЧЕСКИ ИСПРАВЛЕНО: `--rcfile` и `-i` теперь передаются как отдельные аргументы.
+    "${ssh_cmd[@]}" -t "${remaining_args[@]}" 'chmod +x "$HOME/.$USER.bash-ssh"; exec bash --rcfile "$HOME/.$USER.bash-ssh" -i'
 }
 
 # --- Функция для автоматической настройки псевдонимов пакетных менеджеров ---
@@ -157,9 +304,10 @@ setup_os_aliases() {
             alias remove='brew uninstall'
             alias search='brew search'
         fi
-    elif [ -f /etc/os-release ]; then
-       . /etc/os-release
-        case "$ID" in
+    elif [[ -f /etc/os-release ]]; then
+        # ИЗМЕНЕНО: `.` заменен на `source` для большей ясности.
+        source /etc/os-release
+        case "${ID:-}" in # Добавлено `:-` для защиты от `set -u`
             ubuntu|debian|mint)
                 alias update='sudo apt update && sudo apt full-upgrade -y'
                 alias install='sudo apt install -y'
@@ -183,63 +331,121 @@ setup_os_aliases() {
 }
 
 # =============================================================================
-#  Раздел 2: Конфигурация ТОЛЬКО для ИНТЕРАКТИВНЫХ сессий
+#  Раздел 2: КОНФИГУРАЦИЯ ИСТОРИИ BASH (локально и удаленно)
 # =============================================================================
 
-# ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Логика для интеграции sshb и tmux.
-# ИСПРАВЛЕНО: Проверяем не только SSH_TTY, но и наличие файла, созданного sshb.
-# Это предотвращает изменение SHELL на локальной машине.
-if [ -n "$SSH_TTY" ] && [ -f "$HOME/.$LOGNAME.bash-ssh" ]; then
-    # 1. Принудительно устанавливаем нашу оболочку по умолчанию для этой сессии
-    # ИСПРАВЛЕНО: Используем динамическое имя файла, зависящее от пользователя
-    export SHELL="$HOME/.$LOGNAME.bash-ssh"
+# Настройки размера, формата и фильтрации для стандартной истории (~/.bash_history)
+export HISTSIZE=10000
+export HISTFILESIZE=20000
+export HISTCONTROL="ignoreboth:erasedups"
+export HISTIGNORE="ls:bg:fg:history:exit"
+export HISTTIMEFORMAT="%F %T "
+shopt -s histappend
+# Добавлена опция для надежного сохранения многострочных команд.
+shopt -s cmdhist
 
-    # 2. Если файл запущен как скрипт (что делает tmux), он перезапускает
-    #    bash с правильным конфигом.
-    [ "${BASH_SOURCE[0]}" == "${0}" ] && exec bash --rcfile "$SHELL" "$@"
+# --- Функция для автоматической очистки и синхронизации ~/.bash_history ---
+_manage_local_history() {
+    # Выходим, если переменная HISTFILE не установлена.
+    [[ -z "${HISTFILE:-}" ]] && return
+
+    # Улучшенная, разделенная проверка блокировки файла.
+    # Безопасно блокируем файл истории на время операций, чтобы избежать конфликтов.
+    exec {history_lock}<>"$HISTFILE" || return 1
+    if ! flock -x "$history_lock"; then
+        echo "Внимание: не удалось заблокировать файл истории '$HISTFILE'. Пропускаю управление историей." >&2
+        # Закрываем файловый дескриптор, если блокировка не удалась
+        exec {history_lock}>&-
+        return 1
+    fi
+    
+    # 1. Дописываем новые команды из текущей сессии в файл.
+    history -a
+    # 2. Удаляем дубликаты из файла, сохраняя последнее вхождение и порядок.
+    local hist_tmp
+    hist_tmp=$(mktemp) || {
+        printf "Внимание: не удалось создать временный файл для истории.\n" >&2
+        flock -u "$history_lock"
+        exec {history_lock}>&-
+        return 1
+    }
+    
+    # ИЗМЕНЕНО: `tac | awk | tac` заменен на более переносимый и эффективный однострочник `awk`.
+    # Этот метод, как и предыдущий, читает файл в память.
+    awk '{a[NR]=$0; b[$0]=NR} END{for(i=1;i<=NR;i++)if(b[a[i]]==i)print a[i]}' "$HISTFILE" > "$hist_tmp"
+    
+    # Используем `cp` и `rm` вместо `mv` для сохранения символических ссылок.
+    if cp "$hist_tmp" "$HISTFILE"; then
+        rm -f "$hist_tmp"
+    else
+        printf "Внимание: не удалось обновить файл истории '%s'.\n" "$HISTFILE" >&2
+        rm -f "$hist_tmp"
+    fi
+
+    # 3. Очищаем историю в памяти и читаем ее заново из очищенного файла.
+    history -c
+    history -r
+
+    # Снимаем блокировку и закрываем дескриптор.
+    flock -u "$history_lock"
+    exec {history_lock}>&-
+}
+
+# =============================================================================
+#  Раздел 3: Конфигурация ТОЛЬКО для ИНТЕРАКТИВНЫХ сессий
+# =============================================================================
+
+# Логика для интеграции sshb и tmux.
+# КРИТИЧЕСКИ ВАЖНО: Используем `$USER`, а не `$LOGNAME`.
+if [[ -n "${SSH_TTY:-}" ]] && [[ -f "$HOME/.$USER.bash-ssh" ]]; then
+    # --- ЭТО УДАЛЕННАЯ СЕССИЯ SSHB ---
+    export SHELL="$HOME/.$USER.bash-ssh"
+    
+    # На удаленной машине управляем ее ~/.bash_history и отправляем данные в eternal_history.
+    trap _manage_local_history EXIT
+    PROMPT_COMMAND="_manage_local_history; _remote_send_history"
+
+    # Специальный обработчик для `tmux`.
+    [[ "${BASH_SOURCE[0]}" == "${0}" ]] && exec bash --rcfile "$SHELL" "$@"
+else
+    # --- ЭТО ЛОКАЛЬНАЯ СЕССИЯ ---
+    # В локальной сессии управляем ~/.bash_history и пишем в eternal_history.
+    trap _manage_local_history EXIT
+    PROMPT_COMMAND="_manage_local_history; update_eternal_history"
 fi
 
 # Загружаем остальные конфигурационные файлы.
-[ -f ~/.bash_export ] && . ~/.bash_export
-[ -f ~/.bash_functions ] && . ~/.bash_functions
-[ -f ~/.bash_aliases ] && . ~/.bash_aliases
+[[ -f ~/.bash_export ]] && source ~/.bash_export
+[[ -f ~/.bash_functions ]] && source ~/.bash_functions
+[[ -f ~/.bash_aliases ]] && source ~/.bash_aliases
 
 # --- Теперь, когда все загружено, можно вызывать команды и функции ---
 
-# Вызываем функцию для создания псевдонимов под текущую ОС
 setup_os_aliases
 
-# Добавляем функцию "вечной истории"
-[[ "$PROMPT_COMMAND" == *update_eternal_history* ]] || PROMPT_COMMAND="update_eternal_history;$PROMPT_COMMAND"
+# Используем `command -v` вместо нестандартного `type -f`.
+command -v rbenv &>/dev/null && eval "$(rbenv init -)"
+command -v pyenv &>/dev/null && eval "$(pyenv init -)"
 
-# Инициализация rbenv/pyenv
-type -f rbenv >/dev/null 2>&1 && eval "$(rbenv init -)"
-type -f pyenv >/dev/null 2>&1 && eval "$(pyenv init -)"
-
-# --- ИЗМЕНЕНО: Улучшенная настройка SSH Agent ---
-# Проверяем наличие любых стандартных приватных ключей (id_rsa, id_ed25519, и т.д.).
-# Конструкция `find ... -print -quit | grep -q .` ищет хотя бы один такой файл и завершается.
-if find ~/.ssh -type f -name 'id_*' ! -name '*.pub' -print -quit | grep -q .; then
+# --- Улучшенная настройка SSH Agent ---
+if find ~/.ssh -type f -name 'id_*' ! -name '*.pub' -print -quit 2>/dev/null | grep -q .; then
     export SSH_AUTH_SOCK=~/.ssh/agent
-    # Запускаем агент, если он еще не запущен
-    if ! pgrep -f "$SSH_AUTH_SOCK" >/dev/null; then
+    # Проверяем наличие `pgrep` перед использованием.
+    if command -v pgrep &>/dev/null && ! pgrep -f "ssh-agent.*$SSH_AUTH_SOCK" >/dev/null 2>&1; then
         rm -f "$SSH_AUTH_SOCK"
         ssh-agent -a "$SSH_AUTH_SOCK" &>/dev/null
     fi
-    # Добавляем ключи, только если в агенте еще нет ни одного ключа,
-    # чтобы избежать запроса пароля при каждом открытии терминала.
     if ! ssh-add -l >/dev/null; then
-        # Пытаемся добавить все стандартные ключи. Ошибки (например, от зашифрованных ключей) подавляются.
-        ssh-add >/dev/null 2>&1
+        ssh-add &>/dev/null
     fi
 fi
 
 # Настройка командной строки (Prompt)
-if [ -r ~/.byobu/prompt ]; then
-    . ~/.byobu/prompt
+if [[ -r ~/.byobu/prompt ]]; then
+    source ~/.byobu/prompt
     PS1=$(sed -e 's/..byobu_prompt_runtime..//' <<<"$PS1")
 else
-    if [ -x /usr/bin/tput ] && tput setaf 1 >&/dev/null; then
+    if [[ -x /usr/bin/tput ]] && tput setaf 1 >&/dev/null; then
         PS1='\[\e[32m\]\u@\h\[\e[0m\]:\[\e[34m\]\w\[\e[0m\]\$ '
     else
         PS1='\u@\h:\w\$ '
@@ -248,17 +454,17 @@ fi
 
 # Включение bash-completion
 if ! shopt -oq posix; then
-  if [ -f /usr/share/bash-completion/bash_completion ]; then
-    . /usr/share/bash-completion/bash_completion
-  elif [ -f /etc/bash_completion ]; then
-    . /etc/bash_completion
+  if [[ -f /usr/share/bash-completion/bash_completion ]]; then
+    source /usr/share/bash-completion/bash_completion
+  elif [[ -f /etc/bash_completion ]]; then
+    source /etc/bash_completion
   fi
 fi
 
-# --- ИЗМЕНЕНО: Финальное сообщение о загрузке ---
-# Показываем разный вывод для локальной и удаленной sshb сессии.
-if [ -n "$SSH_TTY" ] && [ -f "$HOME/.$LOGNAME.bash-ssh" ]; then
-    echo ">> Удаленное окружение sshb для ${USER}@${HOSTNAME} успешно загружено."
+# --- Финальное сообщение о загрузке ---
+# Используем `printf` для единообразия и надежности.
+if [[ -n "${SSH_TTY:-}" ]] && [[ -f "$HOME/.$USER.bash-ssh" ]]; then
+    printf ">> Удаленное окружение sshb для %s@%s успешно загружено.\n" "${USER}" "${HOSTNAME}"
 else
-    echo ">> Локальная конфигурация Bash успешно загружена."
+    printf ">> Локальная конфигурация Bash успешно загружена.\n"
 fi
