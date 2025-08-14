@@ -1,0 +1,64 @@
+# ~/.bash_completions
+# Этот файл загружает скрипты автодополнения для различных утилит.
+
+# --- Git Completion ---
+# Улучшенное автодополнение для Git, включая псевдонимы.
+if [ -f /usr/share/bash-completion/completions/git ]; then
+    source /usr/share/bash-completion/completions/git
+    # Для работы автодополнения с вашими псевдонимами (g, gs, и т.д.)
+    __git_complete g __git_main
+    __git_complete gs _git_status
+    __git_complete glog _git_log
+    __git_complete ga _git_add
+    __git_complete gaa _git_add
+    __git_complete gb _git_branch
+    __git_complete gc _git_commit
+    __git_complete gca _git_commit
+    __git_complete gco _git_checkout
+    __git_complete gcb _git_checkout
+    __git_complete gd _git_diff
+    __git_complete gds _git_diff
+    __git_complete gm _git_merge
+    __git_complete gp _git_push
+    __git_complete gpl _git_pull
+fi
+
+# --- Docker Completion ---
+if [ -f /usr/share/bash-completion/completions/docker ]; then
+    source /usr/share/bash-completion/completions/docker
+fi
+
+# --- Docker Compose Completion ---
+if [ -f /usr/share/bash-completion/completions/docker-compose ]; then
+    source /usr/share/bash-completion/completions/docker-compose
+fi
+
+# --- Kubectl (k) Completion ---
+if [ -f /usr/share/bash-completion/completions/kubectl ]; then
+    source /usr/share/bash-completion/completions/kubectl
+    complete -F __start_kubectl k
+fi
+
+# --- SSH Completion ---
+# Автодополнение имен хостов из ~/.ssh/config
+if [ -f /etc/bash_completion.d/ssh ]; then
+    source /etc/bash_completion.d/ssh
+fi
+
+# ==============================================================================
+#   АВТОДОПОЛНЕНИЕ ДЛЯ ПСЕВДОНИМОВ 
+# ==============================================================================
+
+# Функция, которая получает список всех текущих псевдонимов.
+_aliases() {
+  # Переменная COMPREPLY - это специальный массив в Bash,
+  # который хранит возможные варианты для автодополнения.
+  # `compgen -a` генерирует список псевдонимов, совпадающих с тем,
+  # что уже напечатано пользователем (`${COMP_WORDS[COMP_CWORD]}`).
+  COMPREPLY=($(compgen -a -- "${COMP_WORDS[COMP_CWORD]}"))
+}
+
+# Регистрируем функцию `_aliases` как обработчик автодополнения
+# для команд `unalias` и `alias`. Теперь при нажатии Tab после
+# этих команд будет вызываться наша функция.
+complete -F _aliases unalias alias
