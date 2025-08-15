@@ -419,3 +419,8 @@ alias vst='vagrant status' # Статус Vagrant машины
 alias vprov='vagrant provision' # Выполнить provision Vagrant машины
 alias vreload='vagrant reload' # Перезагрузить Vagrant машину
 alias d-c='docker-compose' # Короткий псевдоним для docker-compose
+
+# -- Раздел 14: Интегрированные плагины --
+alias t='todo'      # Быстро добавить задачу
+alias tdl='todos'   # Показать список задач (todo list)
+alias d='done'      # Отметить задачу как выполненную
