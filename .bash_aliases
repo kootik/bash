@@ -7,6 +7,7 @@
 alias ha='h-alias'              # Краткий псевдоним для списка alias.
 alias fa='h-func'               # Краткий псевдоним для списка функций.
 alias ex='exit'                 # Краткий псевдоним для выхода.
+alias bask='bask'               # Основная команда для управления окружением.
 
 # -- Раздел 1: Навигация и отображение содержимого --
 # Улучшенный и цветной вывод 'ls'
@@ -418,4 +419,3 @@ alias vst='vagrant status' # Статус Vagrant машины
 alias vprov='vagrant provision' # Выполнить provision Vagrant машины
 alias vreload='vagrant reload' # Перезагрузить Vagrant машину
 alias d-c='docker-compose' # Короткий псевдоним для docker-compose
-
