@@ -204,7 +204,7 @@ EOF
 export HISTSIZE=10000
 export HISTFILESIZE=20000
 export HISTCONTROL="ignoreboth:erasedups"
-export HISTIGNORE="ls:bg:fg:history:exit"
+export HISTIGNORE="ls:bg:fg:history:exit:bask" # Добавлен bask в игнор
 export HISTTIMEFORMAT="%F %T "
 shopt -s histappend
 shopt -s cmdhist
@@ -277,11 +277,18 @@ if ! shopt -oq posix; then
   fi
 fi
 
+# --- Интеграция плагина history-substring-search ---
+# Поиск по истории по подстроке стрелками вверх/вниз
+bind '"\e[A": history-search-backward'
+bind '"\e[B": history-search-forward'
+
 # --- Финальная инициализация ---
 # Вызываем функции, которые должны быть выполнены после загрузки всех компонентов.
 setup_os_aliases
 load_pyenv_plugin
 load_rbenv_plugin
+load_direnv_plugin      # <-- НОВАЯ СТРОКА
+load_smart_nav_plugin   # <-- НОВАЯ СТРОКА
 
 # --- Финальное сообщение о загрузке ---
 if [[ -n "${SSHB_SESSION:-}" ]]; then
