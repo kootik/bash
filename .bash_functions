@@ -2,16 +2,9 @@
 # ~/.bash_functions.professional: Профессиональная коллекция shell-функций.
 # Этот файл содержит проверенные, безопасные и эффективные функции.
 
-#   РАЗДЕЛ 0: ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (HELPERS)
-
-# Проверяет, существует ли команда в системе.
-# Это более надежная и читаемая альтернатива `command -v`.
-# Пример: if command_exists "docker"; then ...
+# Проверка существования команды (улучшенная версия)
 command_exists() {
-    # `hash` - это встроенная команда Bash, которая ищет команду в $PATH
-    # и кэширует ее. Перенаправление вывода в /dev/null скрывает
-    # сообщение об успехе или ошибке.
-    hash "$1" 2>/dev/null
+    command -v "$1" >/dev/null 2>&1
 }
 
 #   РАЗДЕЛ 1: СИСТЕМНЫЕ И СЕССИОННЫЕ ФУНКЦИИ
@@ -32,18 +25,32 @@ bak() {
     local timestamp
     timestamp=$(date +%Y-%m-%d_%H-%M-%S)
     echo "Создание резервной копии..."
-    cp -av "$1" "${1}.bak.${timestamp}"
+    if cp -av "$1" "${1}.bak.${timestamp}"; then
+        echo "Резервная копия создана: ${1}.bak.${timestamp}"
+    else
+        echo "Ошибка при создании резервной копии" >&2
+        return 1
+    fi
 }
 
 # Более гибкая версия для поиска "тяжелых" файлов/папок
 # Использование: dut [ПУТЬ] [ГЛУБИНА] [КОЛ-ВО_СТРОК]
 # Пример: dut /var/log 2 10
 dut() {
-  local path=${1:-.}
-  local depth=${2:-2}
-  local count=${3:-20}
-  echo "🔍 Поиск в '$path' на глубину '$depth' (топ $count):"
-  command du -h --max-depth="$depth" "$path" 2>/dev/null | command sort -rh | command head -n "$count"
+    local path="${1:-.}"
+    local depth="${2:-2}"
+    local count="${3:-20}"
+
+    if [ ! -d "$path" ]; then
+        echo "Ошибка: '$path' не является директорией" >&2
+        return 1
+    fi
+
+    echo "🔍 Поиск в '$path' на глубину '$depth' (топ $count):"
+    if ! command du -h --max-depth="$depth" "$path" 2>/dev/null | command sort -rh | command head -n "$count"; then
+        echo "Ошибка при анализе директории" >&2
+        return 1
+    fi
 }
 
 # Создает директорию и сразу переходит в нее.
@@ -53,7 +60,12 @@ mkcd() {
         echo "Использование: mkcd <имя_каталога>" >&2
         return 1
     fi
-    mkdir -p -- "$1" && cd -P -- "$1"
+    if mkdir -p -- "$1" && cd -P -- "$1"; then
+        echo "Создана и открыта директория: $1"
+    else
+        echo "Ошибка при создании/переходе в директорию" >&2
+        return 1
+    fi
 }
 
 # -- Раздел 1: Управление файлами и архивами --
@@ -90,12 +102,21 @@ fdd() {
 # Требует утилиты trash-cli (например, sudo apt install trash-cli)
 # Использование: trash file.txt folder/
 trash() {
+    if [ $# -eq 0 ]; then
+        echo "Использование: trash <файл1> [файл2...]" >&2
+        return 1
+    fi
+
     if command_exists "trash-put"; then
         trash-put "$@"
-        return
+        return $?
     fi
     local trash_dir="$HOME/.Trash"
-    mkdir -p "$trash_dir"
+    if ! mkdir -p "$trash_dir"; then
+        echo "Ошибка: не удалось создать директорию корзины '$trash_dir'" >&2
+        return 1
+    fi
+
     echo "Предупреждение: 'trash-put' не найден. Файлы будут перемещены в '$trash_dir'." >&2
     mv -v "$@" "$trash_dir"
 }
@@ -170,7 +191,7 @@ fsearch() {
     fi
     local text="$1"
     shift
-    grep -rnwE "$@" -e "$text"
+    grep -rnwE -e "$text" "$@"
 }
 # --- Сетевые утилиты ---
 # Выполняет DNS-запрос через Google DNS-over-HTTPS.
@@ -180,18 +201,33 @@ doh() {
         echo "Ошибка: 'jq' не найден." >&2
         return 1
     fi
+    if ! command_exists "curl"; then
+        echo "Ошибка: 'curl' не найден." >&2
+        return 1
+    fi
     if [ -z "$1" ]; then
         echo "Использование: doh <доменное_имя>" >&2
         return 1
     fi
-    curl -s -H 'accept: application/dns+json' "https://dns.google.com/resolve?name=$1" | jq
+
+    if ! curl -s -H 'accept: application/dns+json' "https://dns.google.com/resolve?name=$1" | jq; then
+        echo "Ошибка при выполнении DNS запроса" >&2
+        return 1
+    fi
 }
 
 # Показывает погоду для указанного города.
 # Пример: weather London
 weather() {
+    if ! command_exists "curl"; then
+        echo "Ошибка: 'curl' не найден." >&2
+        return 1
+    fi
     local city="${1:-Moscow}"
-    curl -s "wttr.in/${city}?format=4"
+    if ! curl -s --connect-timeout 10 "wttr.in/${city}?format=4"; then
+        echo "Ошибка при получении данных о погоде" >&2
+        return 1
+    fi
 }
 
 # "Умное" завершение процесса по имени.
@@ -205,34 +241,57 @@ killg() {
         echo "Процессы, содержащие '$1', не найдены."
         return 0
     fi
-    echo "Попытка завершить процессы '$1' от имени текущего пользователя..."
-    pkill -fi "$1" &>/dev/null
-    if ! pgrep -fi "$1" > /dev/null; then
-        echo "Процессы успешно завершены."
+
+    echo "Найденные процессы:"
+    pgrep -fli "$1"
+
+    read -p "Завершить эти процессы? (y/n): " -r confirm
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        echo "Операция отменена."
         return 0
     fi
-    read -p "Не удалось завершить от имени текущего пользователя. Использовать sudo? (y/n): " confirm
-    if [[ $confirm != [yY] ]]; then
+
+    echo "Попытка завершить процессы '$1' от имени текущего пользователя..."
+    if pkill -fi "$1" 2>/dev/null; then
+        sleep 2
+        if ! pgrep -fi "$1" > /dev/null; then
+            echo "Процессы успешно завершены."
+            return 0
+        fi
+    fi
+
+    read -p "Не удалось завершить процессы. Использовать sudo с SIGKILL? (y/n): " -r confirm
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
         echo "Операция отменена."
         return 1
     fi
-    echo "Повышение прав до sudo..."
-    sudo pkill -f -i -9 "$1" &>/dev/null
-    if ! pgrep -fi "$1" > /dev/null; then
-        echo "Процессы успешно завершены с правами sudo."
+
+    echo "Принудительное завершение с правами sudo..."
+    if sudo pkill -f -i -9 "$1" 2>/dev/null; then
+        sleep 1
+        if ! pgrep -fi "$1" > /dev/null; then
+            echo "Процессы успешно завершены с правами sudo."
+        else
+            echo "Не удалось завершить процессы даже с правами sudo." >&2
+            return 1
+        fi
     else
-        echo "Не удалось завершить процессы даже с правами sudo." >&2
+        echo "Ошибка при выполнении команды с sudo" >&2
         return 1
     fi
 }
-# -- Раздел 2: Навигация и системная информация --
 
 # Переходит в каталог и выводит его содержимое.
 # Пример: cl /var/log
 cl() {
     local dir="${1:-$HOME}"
     if [ -d "$dir" ]; then
-        cd "$dir" && ls -F --color=auto
+        if cd "$dir"; then
+            ls -F --color=auto 2>/dev/null || ls -F
+        else
+            echo "Ошибка при переходе в каталог '$dir'" >&2
+            return 1
+        fi
     else
         echo "Ошибка: каталог '$dir' не найден." >&2
         return 1
@@ -245,24 +304,32 @@ dfh() {
     if command_exists "pydf"; then
         pydf
     else
-        df -Tha --total
+        df -Tha --total 2>/dev/null || df -h
     fi
 }
 
 # Показывает суммарный размер указанного каталога.
 # Пример: duh /var/www
 duh() {
-    if [ -z "$1" ]; then
-        du -sh .
+    local target="${1:-.}"
+    if [ -e "$target" ]; then
+        du -sh "$target"
     else
-        du -sh "$1"
+        echo "Ошибка: '$target' не найден" >&2
+        return 1
     fi
 }
 
 # Показывает размер подкаталогов в указанном пути, отсортированный по убыванию.
 # Пример: dus /var
 dus() {
-    du -h --max-depth=1 "${@:-.}" | sort -rh
+    local target="${1:-.}"
+    if [ -d "$target" ]; then
+        du -h --max-depth=1 "$target" 2>/dev/null | sort -rh
+    else
+        echo "Ошибка: '$target' не является директорией" >&2
+        return 1
+    fi
 }
 
 # Показывает список доступных функций с их описанием и примерами.
@@ -272,7 +339,12 @@ h-func() {
     if [[ "$SHELL" == *".bash-ssh" ]]; then
         source_file="$SHELL"
     fi
-    if [ ! -f "$source_file" ]; then echo "Файл с функциями не найден: $source_file" >&2; return 1; fi
+
+    if [ ! -f "$source_file" ]; then
+        echo "Файл с функциями не найден: $source_file" >&2
+        return 1
+    fi
+
     echo -e "\n\e[1;32mПОЛЬЗОВАТЕЛЬСКИЕ ФУНКЦИИ (подсказка)\e[0m"
     awk '
         /^#/ {
@@ -314,7 +386,12 @@ h-alias() {
     if [[ "$SHELL" == *".bash-ssh" ]]; then
         source_file="$SHELL"
     fi
-    if [ ! -f "$source_file" ]; then echo "Файл с псевдонимами не найден: $source_file" >&2; return 1; fi
+
+    if [ ! -f "$source_file" ]; then
+        echo "Файл с псевдонимами не найден: $source_file" >&2
+        return 1
+    fi
+
     echo -e "\n\e[1;32mПОЛЬЗОВАТЕЛЬСКИЕ ПСЕВДОНИМЫ (подсказка)\e[0m"
     awk '
         /^# --.*--$/ {
@@ -344,30 +421,46 @@ h-alias() {
 # Предоставляет краткую сводку о системе.
 # Пример: sysinfo
 sysinfo() {
-    (
-        . /etc/os-release 2>/dev/null
-        echo -e "\n\e[1;32mОПЕРАЦИОННАЯ СИСТЕМА\e[0m"
+    echo -e "\n\e[1;32mОПЕРАЦИОННАЯ СИСТЕМА\e[0m"
+    if [ -f /etc/os-release ]; then
+        # shellcheck source=/dev/null
+        . /etc/os-release
         echo "  ОС:           ${PRETTY_NAME:-$(uname -s)}"
-        echo "  Ядро:         $(uname -r)"
-        echo "  Архитектура:  $(uname -m)"
-        echo "  Время работы: $(uptime -p | sed "s/up //")"
-        echo ""
-    )
+    else
+        echo "  ОС:           $(uname -s)"
+    fi
+    echo "  Ядро:         $(uname -r)"
+    echo "  Архитектура:  $(uname -m)"
+
+    if command_exists "uptime"; then
+        echo "  Время работы: $(uptime -p 2>/dev/null | sed "s/up //" || uptime)"
+    fi
+    echo ""
+
     echo -e "\e[1;32mРЕСУРСЫ\e[0m"
-    free -h
+    if command_exists "free"; then
+        free -h
+    fi
     echo ""
-    df -h 
+
+    if command_exists "df"; then
+        df -h 2>/dev/null | head -10
+    fi
     echo ""
+
     echo -e "\e[1;32mПРОЦЕССОР\e[0m"
-    lscpu | grep -E "Model name|CPU\(s\)|Vendor ID|Socket\(s\)"
+    if command_exists "lscpu"; then
+        lscpu | grep -E "Model name|CPU\(s\)|Vendor ID|Socket\(s\)" 2>/dev/null
+    fi
     echo ""
+
     echo -e "\e[1;32mСЕТЬ\e[0m"
-    echo -e "  Имя хоста:    $(hostname)"
+    echo "  Имя хоста:    $(hostname)"
     echo "  IP-адреса:"
     if command_exists "ip"; then
-        ip -br a | awk '{printf "    %-15s %s\n", $1, $3}'
+        ip -br a 2>/dev/null | awk '{printf "    %-15s %s\n", $1, $3}'
     elif command_exists "ifconfig"; then
-        ifconfig | grep "inet " | awk '{print "    " $2}'
+        ifconfig 2>/dev/null | grep "inet " | awk '{print "    " $2}'
     else
         echo "    Не удалось получить IP (установите ip или ifconfig)."
     fi
@@ -378,7 +471,11 @@ sysinfo() {
 # Пример: topcpu 5
 topcpu() {
     local num="${1:-10}"
-    ps aux --sort=-%cpu | head -n "$((num + 1))"
+    if ! [[ "$num" =~ ^[0-9]+$ ]] || [ "$num" -lt 1 ]; then
+        echo "Ошибка: количество должно быть положительным числом" >&2
+        return 1
+    fi
+    ps aux --sort=-%cpu 2>/dev/null | head -n "$((num + 1))"
 }
 
 # -- Раздел 3: Сеть и сеанс --
@@ -390,34 +487,69 @@ digx() {
         echo "Использование: digx <домен> [тип_записи]" >&2
         return 1
     fi
+    if ! command_exists "dig"; then
+        echo "Ошибка: команда 'dig' не найдена" >&2
+        return 1
+    fi
     dig +nocmd "$1" "${2:-A}" +noall +answer
 }
 
 # Проверяет, открыт ли TCP-порт на хосте.
 # Пример: checkport example.com 443
 checkport() {
-    if nc -z -v -w 2 "$1" "$2" &> /dev/null; then
-        echo "Порт $2 на $1 открыт"
+    if [ $# -ne 2 ]; then
+        echo "Использование: checkport <хост> <порт>" >&2
+        return 1
+    fi
+
+    local host="$1"
+    local port="$2"
+
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        echo "Ошибка: некорректный номер порта" >&2
+        return 1
+    fi
+
+    if command_exists "nc"; then
+        if nc -z -v -w 2 "$host" "$port" 2>/dev/null; then
+            echo "Порт $port на $host открыт"
+        else
+            echo "Порт $port на $host закрыт"
+        fi
+    elif command_exists "timeout"; then
+        if timeout 2 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then
+            echo "Порт $port на $host открыт"
+        else
+            echo "Порт $port на $host закрыт"
+        fi
     else
-        echo "Порт $2 на $1 закрыт"
+        echo "Ошибка: не найдены команды для проверки портов (nc, timeout)" >&2
+        return 1
     fi
 }
 
 # "Умная" блокировка экрана.
 # Пример: lock
 lock() {
-    if command_exists "xdg-screensaver"; then
-        xdg-screensaver lock
-    elif command_exists "loginctl"; then
-        loginctl lock-session
-    elif command_exists "gnome-screensaver-command"; then
-        gnome-screensaver-command -l
-    elif command_exists "xflock4"; then
-        xflock4
-    else
-        echo "Не найдена команда для блокировки экрана." >&2
-        return 1
-    fi
+    local lock_commands=(
+        "xdg-screensaver lock"
+        "loginctl lock-session"
+        "gnome-screensaver-command -l"
+        "xflock4"
+        "i3lock"
+        "slock"
+    )
+
+    for cmd in "${lock_commands[@]}"; do
+        local cmd_name="${cmd%% *}"
+        if command_exists "$cmd_name"; then
+            eval "$cmd"
+            return $?
+        fi
+    done
+
+    echo "Не найдена команда для блокировки экрана." >&2
+    return 1
 }
 
 # -- Раздел 4: Инструменты разработчика --
@@ -427,6 +559,10 @@ lock() {
 jnl-unit() {
     if [ -z "$1" ]; then
         echo "Использование: jnl-unit <имя_юнита>" >&2
+        return 1
+    fi
+    if ! command_exists "journalctl"; then
+        echo "Ошибка: команда 'journalctl' не найдена" >&2
         return 1
     fi
     sudo journalctl -u "$1" -f --no-pager
@@ -439,6 +575,10 @@ gacp() {
         echo "Ошибка: необходимо указать сообщение коммита." >&2
         return 1
     fi
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "Ошибка: не находимся в git репозитории" >&2
+        return 1
+    fi
     git add --all && git commit -m "$1" && git push
 }
 
@@ -449,12 +589,21 @@ gnewbranch() {
         echo "Ошибка: необходимо указать имя новой ветки." >&2
         return 1
     fi
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "Ошибка: не находимся в git репозитории" >&2
+        return 1
+    fi
     git checkout -b "$1" && git push -u origin "$1"
 }
 
 # Удаляет локальные ветки, которые уже были слиты в основную ветку.
 # Пример: gprune
 gprune() {
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "Ошибка: не находимся в git репозитории" >&2
+        return 1
+    fi
+
     git fetch --all --prune
     local main_branch
     if git show-ref --verify --quiet refs/heads/main; then
@@ -466,8 +615,15 @@ gprune() {
         return 1
     fi
     echo "Основная ветка: $main_branch. Удаление слитых веток..."
-    git branch --merged "$main_branch" | grep -vE "^\*|^\s*$main_branch$" | xargs -r git branch -d
-    echo "Очистка завершена."
+    local merged_branches
+    merged_branches=$(git branch --merged "$main_branch" | grep -vE "^\*|^\s*$main_branch$")
+
+    if [ -n "$merged_branches" ]; then
+        echo "$merged_branches" | xargs -r git branch -d
+        echo "Очистка завершена."
+    else
+        echo "Нет веток для удаления."
+    fi
 }
 
 # Быстрая очистка Docker.
@@ -477,6 +633,11 @@ dclean() {
         echo "Ошибка: 'docker' не найден." >&2
         return 1
     fi
+    if ! docker info >/dev/null 2>&1; then
+        echo "Ошибка: Docker daemon недоступен" >&2
+        return 1
+    fi
+
     echo "Удаление остановленных контейнеров..."
     docker container prune -f
     echo "Удаление неиспользуемых образов, сетей и кэша сборки..."
@@ -490,6 +651,11 @@ mkvenv() {
         echo "Ошибка: необходимо указать имя для виртуального окружения."
         return 1
     fi
+    if ! command_exists "python3"; then
+        echo "Ошибка: команда 'python3' не найдена" >&2
+        return 1
+    fi
+
     python3 -m venv "$1" && \
     source "$1/bin/activate" && \
     pip install -U pip wheel && \
@@ -500,20 +666,37 @@ mkvenv() {
 # Пример: genpass 16
 genpass() {
     local length="${1:-12}"
-    tr -dc 'A-Za-z0-9!@#$%^&*()_+' < /dev/urandom | head -c "$length"
-    echo
+    if ! [[ "$length" =~ ^[0-9]+$ ]] || [ "$length" -lt 4 ]; then
+        echo "Ошибка: длина должна быть числом не менее 4" >&2
+        return 1
+    fi
+
+    if command_exists "openssl"; then
+        openssl rand -base64 "$length" | tr -d "=+/" | cut -c1-"$length"
+    else
+        tr -dc 'A-Za-z0-9!@#$%^&*()_+' < /dev/urandom | head -c "$length"
+        echo
+    fi
 }
 # -- Раздел 5: Утилиты --
 
 # Ищет запущенные процессы по имени, исключая сам процесс поиска.
 # Пример: psg "nginx|php-fpm"
 psg() {
+  if [ $# -eq 0 ]; then
+      echo "Использование: psg <шаблон_поиска>" >&2
+      return 1
+  fi
   ps aux | grep -v grep | grep -Ei --color=auto "$@"
 }
 
 # Ищет в истории команд по заданному шаблону.
 # Пример: hg "docker ps"
 hg() {
+    if [ $# -eq 0 ]; then
+        echo "Использование: hg <шаблон_поиска>" >&2
+        return 1
+    fi
     history | grep -E --color=auto "$@"
 }
 
@@ -559,6 +742,14 @@ clbin() {
 # Извлекает указанные столбцы из стандартного ввода.
 # Пример: ls -l | extract_column 1 9
 extract_column() {
+    if [ $# -eq 0 ]; then
+        echo "Использование: extract_column <номера_колонок>" >&2
+        echo "Примеры: extract_column 1 3 5" >&2
+        echo "        extract_column 2-4" >&2
+        echo "        extract_column 3-" >&2
+        return 1
+    fi
+
     awk -v cols_str="$*" '
     BEGIN {
         n = split(cols_str, ranges, " ");
@@ -579,7 +770,7 @@ extract_column() {
                 line = (line == "" ? $i : line " " $i);
             }
         }
-        if (line!= "") print line;
+        if (line != "") print line;
     }'
 }
 
@@ -594,25 +785,39 @@ setup_os_aliases() {
             alias search='brew search'
         fi
     elif [ -f /etc/os-release ]; then
+       # shellcheck source=/dev/null
        . /etc/os-release
         case "$ID" in
-            ubuntu|debian|mint)
+            ubuntu|debian|mint|linuxmint)
                 alias update='sudo apt update && sudo apt full-upgrade -y'
                 alias install='sudo apt install -y'
                 alias remove='sudo apt autoremove --purge -y'
                 alias search='apt-cache search'
                 ;;
-            fedora|centos|rhel)
-                alias update='sudo dnf upgrade -y'
-                alias install='sudo dnf install -y'
-                alias remove='sudo dnf remove -y'
-                alias search='dnf search'
+            fedora|centos|rhel|rocky|almalinux)
+                if command_exists "dnf"; then
+                    alias update='sudo dnf upgrade -y'
+                    alias install='sudo dnf install -y'
+                    alias remove='sudo dnf remove -y'
+                    alias search='dnf search'
+                elif command_exists "yum"; then
+                    alias update='sudo yum update -y'
+                    alias install='sudo yum install -y'
+                    alias remove='sudo yum remove -y'
+                    alias search='yum search'
+                fi
                 ;;
-            arch|manjaro)
+            arch|manjaro|endeavouros)
                 alias update='sudo pacman -Syu'
                 alias install='sudo pacman -S --noconfirm'
                 alias remove='sudo pacman -Rns --noconfirm'
                 alias search='pacman -Ss'
+                ;;
+            opensuse*|sles)
+                alias update='sudo zypper refresh && sudo zypper update'
+                alias install='sudo zypper install'
+                alias remove='sudo zypper remove'
+                alias search='zypper search'
                 ;;
         esac
     fi
@@ -627,6 +832,11 @@ gfb() {
         echo "Ошибка: команда 'fzf' не найдена." >&2
         return 1
     fi
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "Ошибка: не находимся в git репозитории" >&2
+        return 1
+    fi
+
     local branch
     branch=$(git for-each-ref --count=30 --sort=-committerdate refs/heads/ --format="%(refname:short)" |
         fzf --preview 'git log --color=always --oneline -n 15 {}' --reverse)
@@ -635,10 +845,16 @@ gfb() {
     fi
 }
 
-# Интерактивно просмотреть историю коммитов (git log).
-# Пример: Нажмите Enter для деталей, Ctrl-D для просмотра diff.
 gfl() {
-    if ! command_exists "fzf"; then echo "Ошибка: fzf не найден." >&2; return 1; fi
+    if ! command_exists "fzf"; then
+        echo "Ошибка: fzf не найден." >&2
+        return 1
+    fi
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "Ошибка: не находимся в git репозитории" >&2
+        return 1
+    fi
+
     git log --graph --color=always \
         --format="%C(auto)%h%d %s %C(black)%C(bold)%cr" "$@" |
     fzf --ansi --no-sort --reverse --tiebreak=index --preview \
@@ -702,12 +918,17 @@ gfd() {
 # Переходит вверх по иерархии каталогов.
 # Пример: up 3
 up() {
-    local count=${1:-1}
+    local count="${1:-1}"
+    if ! [[ "$count" =~ ^[0-9]+$ ]] || [ "$count" -lt 1 ]; then
+        echo "Ошибка: количество должно быть положительным числом" >&2
+        return 1
+    fi
+
     local path=""
     for ((i=0; i<count; i++)); do
         path+="../"
     done
-    cd "$path"
+    cd "$path" || return 1
 }
 
 # Калькулятор с поддержкой чисел с плавающей точкой.
@@ -715,6 +936,10 @@ up() {
 calc() {
     if [ -z "$1" ]; then
         echo "Использование: calc \"выражение\"" >&2
+        return 1
+    fi
+    if ! command_exists "bc"; then
+        echo "Ошибка: команда 'bc' не найдена" >&2
         return 1
     fi
     echo "scale=10; $1" | bc -l | sed -E 's/([.0-9]*[1-9])0+$|\.0+$/\1/'
@@ -796,7 +1021,7 @@ kdecode() {
     local key="$2"
     if [ -n "$key" ]; then
         kubectl get secret "$secret_name" -o "jsonpath={.data.$key}" | base64 --decode
-        echo # Добавляем перенос строки для чистоты вывода
+        echo
     else
         kubectl get secret "$secret_name" -o json | jq -r '.data | to_entries[] | "\(.key): \(.value | @base64d)"'
     fi
@@ -810,8 +1035,14 @@ check_ssl() {
         echo "Использование: check_ssl <домен>" >&2
         return 1
     fi
+    if ! command_exists "openssl"; then
+        echo "Ошибка: команда 'openssl' не найдена" >&2
+        return 1
+    fi
+
     echo "Проверка сертификата для ${domain}..."
-    echo | openssl s_client -servername "${domain}" -connect "${domain}:443" 2>/dev/null | openssl x509 -noout -text | grep -E "Issuer:|Subject:|Not Before|Not After"
+    echo | openssl s_client -servername "${domain}" -connect "${domain}:443" 2>/dev/null | \
+    openssl x509 -noout -text | grep -E "Issuer:|Subject:|Not Before|Not After"
 }
 
 # Быстро декодировать токен JWT (полезно для API и аутентификации).
@@ -915,7 +1146,7 @@ gsync() {
     fi
     local current_branch
     current_branch=$(git rev-parse --abbrev-ref HEAD)
-    local main_branch="main" # Или 'master', если используется он
+    local main_branch="main"
     echo "Переключение на ветку '${main_branch}'..."
     git checkout "$main_branch"
     echo "Получение изменений из 'upstream'..."
@@ -1082,7 +1313,19 @@ sshm() {
 # Требует: fzf, ripgrep (rg), bat (опционально)
 # Пример: frg "MyApi.Component"
 frg() {
-    if ! command_exists "rg"; then echo "Ошибка: команда 'ripgrep (rg)' не найдена." >&2; return 1; fi
+    if [ -z "$1" ]; then
+        echo "Использование: frg <паттерн_поиска>" >&2
+        return 1
+    fi
+    if ! command_exists "rg"; then
+        echo "Ошибка: команда 'ripgrep (rg)' не найдена." >&2
+        return 1
+    fi
+    if ! command_exists "fzf"; then
+        echo "Ошибка: команда 'fzf' не найдена." >&2
+        return 1
+    fi
+
     local preview_cmd="cat {1}"
     if command_exists "bat"; then
         preview_cmd="bat --color=always --highlight-line {2} {1}"
@@ -1104,7 +1347,15 @@ frg() {
 # Требует: fzf, ripgrep (rg)
 # Пример: ftodo
 ftodo() {
-    if ! command_exists "rg"; then echo "Ошибка: ripgrep (rg) не найден." >&2; return 1; fi
+    if ! command_exists "rg"; then
+        echo "Ошибка: ripgrep (rg) не найден." >&2
+        return 1
+    fi
+    if ! command_exists "fzf"; then
+        echo "Ошибка: fzf не найден." >&2
+        return 1
+    fi
+
     local preview_cmd="cat {1}"
     if command_exists "bat"; then
         preview_cmd="bat --color=always --highlight-line {2} {1}"
@@ -1170,7 +1421,7 @@ fcd() {
     fi
     if [[ -n "$dir" ]]; then
         if [[ -d "$dir" && -r "$dir" ]]; then
-            cd -- "$dir"
+            cd -- "$dir" || return 1
         else
             echo "Ошибка: Не удается перейти в '$dir'." >&2
             return 1
@@ -1178,7 +1429,7 @@ fcd() {
     fi
 }
 
-#   РАЗДЕЛ 9: УПРАВЛЕНИЕ ОКРУЖЕНИЕМ 
+#   РАЗДЕЛ 9: УПРАВЛЕНИЕ ОКРУЖЕНИЕМ
 # Главная функция для управления кастомным окружением Bash.
 # Пример: my-bash show aliases
 my-bash() {
@@ -1236,7 +1487,7 @@ _my_bash_help() {
     esac
 }
 
-#   РАЗДЕЛ 10: ПЛАГИНЫ ДЛЯ УПРАВЛЕНИЯ ВЕРСИЯМИ 
+#   РАЗДЕЛ 10: ПЛАГИНЫ ДЛЯ УПРАВЛЕНИЯ ВЕРСИЯМИ
 # --- Плагин для pyenv ---
 # Инициализирует pyenv и включает автопереключение версий.
 load_pyenv_plugin() {
@@ -1246,7 +1497,9 @@ load_pyenv_plugin() {
             export PATH="$PYENV_ROOT/bin:$PATH"
         fi
         eval "$(pyenv init -)"
-        eval "$(pyenv virtualenv-init -)"
+        if command_exists "pyenv-virtualenv-init"; then
+            eval "$(pyenv virtualenv-init -)"
+        fi
     fi
 }
 
@@ -1266,28 +1519,37 @@ load_rbenv_plugin() {
 # Собирает дополнительную информацию для отображения в PS1.
 # Включает: код возврата, информацию о Git, количество фоновых задач.
 prompt_info() {
+    # Захватываем код выхода последней команды.
+    local last_exit_code=$?
+
     local exit_code="\[${Green}\]✔\[${Reset}\]"
-    if [ "$?" -ne 0 ]; then
+    if [ "$last_exit_code" -ne 0 ]; then
         exit_code="\[${Red}\]✘\[${Reset}\]"
     fi
+
     local git_info=""
     if command_exists "git" && git rev-parse --is-inside-work-tree &>/dev/null; then
         local branch
-        branch=$(git rev-parse --abbrev-ref HEAD)
+        branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
         local dirty=""
-        if ! git diff --quiet --ignore-submodules HEAD; then
+        if ! git diff --quiet --ignore-submodules HEAD 2>/dev/null; then
             dirty=" \[${Red}\]*\[${Reset}\]"
         fi
         git_info=" \[${Magenta}\](git:\[${Cyan}\]${branch}${dirty}\[${Magenta}\])\[${Reset}\]"
     fi
+
     local jobs_info=""
-    if [ "$(jobs -p | wc -l)" -gt 0 ]; then
-        jobs_info=" \[${Yellow}\](jobs: $(jobs -p | wc -l))\[${Reset}\]"
+    local job_count
+    job_count=$(jobs -p 2>/dev/null | wc -l)
+    if [ "$job_count" -gt 0 ]; then
+        jobs_info=" \[${Yellow}\](jobs: ${job_count})\[${Reset}\]"
     fi
+
     echo -e "${exit_code}${git_info}${jobs_info} "
 }
 
-#   РАЗДЕЛ 12: ПОИСК ПО КОНФИГУРАЦИИ 
+
+#   РАЗДЕЛ 12: ПОИСК ПО КОНФИГУРАЦИИ
 # Выполняет поиск по всем конфигурационным файлам, группируя результаты
 bsearch() {
     local term="$1"
@@ -1303,6 +1565,7 @@ bsearch() {
         ["Автодополнения (completions)"]="$HOME/.bash_completions"
         ["Переменные (exports)"]="$HOME/.bash_export"
     )
+
     echo -e "\n🔍 \e[1mРезультаты поиска для \"${term}\":\e[0m\n"
     local found_in_any=false
     for component_name in "Псевдонимы (aliases)" "Функции (functions)" "Автодополнения (completions)" "Переменные (exports)"; do
@@ -1322,7 +1585,7 @@ bsearch() {
     fi
 }
 
-#   РАЗДЕЛ 13: ИЗМЕРЕНИЕ ВРЕМЕНИ ВЫПОЛНЕНИЯ КОМАНД 
+#   РАЗДЕЛ 13: ИЗМЕРЕНИЕ ВРЕМЕНИ ВЫПОЛНЕНИЯ КОМАНД
 # --- Механизм preexec ---
 preexec() {
     [ -n "$COMP_LINE" ] && return
@@ -1332,21 +1595,23 @@ preexec() {
         "$preexec_function"
     done
 }
+
 precmd() {
     local precmd_function
     for precmd_function in "${precmd_functions[@]}"; do
         "$precmd_function"
     done
 }
+
 preexec_functions+=(bash_it_command_duration_start)
 precmd_functions+=(bash_it_command_duration_stop)
 trap 'preexec' DEBUG
 
-# --- Логика command_duration ---
 export BASH_IT_CMD_DURATION_THRESHOLD=5
 bash_it_command_duration_start() {
     __bash_it_command_start_time=$(date +%s.%N)
 }
+
 bash_it_command_duration_stop() {
     local end_time
     end_time=$(date +%s.%N)
@@ -1363,9 +1628,11 @@ bash_it_command_duration_stop() {
 #   РАЗДЕЛ 14: SUDO ПЛАГИН
 # Повторяет последнюю команду с sudo при двойном нажатии Esc
 sudo-command-line() {
-  [[ -z "$READLINE_LINE" ]] && READLINE_LINE="$(history -p '!!')"
-  READLINE_LINE="sudo $READLINE_LINE"
-  READLINE_POINT=${#READLINE_LINE}
+    [[ -z "$READLINE_LINE" ]] && READLINE_LINE="$(history -p '!!' 2>/dev/null)"
+    if [[ "$READLINE_LINE" != sudo* ]]; then
+        READLINE_LINE="sudo $READLINE_LINE"
+        READLINE_POINT=${#READLINE_LINE}
+    fi
 }
-# Привязываем функцию к двойному нажатию Escape
+
 bind -x '"\e\e": sudo-command-line'
