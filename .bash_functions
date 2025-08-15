@@ -1762,3 +1762,43 @@ bask() {
             ;;
     esac
 }
+
+#   РАЗДЕЛ 16: ИНТЕГРАЦИЯ ПЛАГИНОВ BASH-IT
+# ==============================================================================
+
+# --- Плагин для direnv ---
+# Автоматически загружает переменные окружения из файлов .envrc
+load_direnv_plugin() {
+    if command_exists "direnv"; then
+        eval "$(direnv hook bash)"
+    fi
+}
+
+# --- Плагин для zoxide (предпочтительнее) или autojump ---
+# "Умная" навигация по каталогам
+load_smart_nav_plugin() {
+    if command_exists "zoxide"; then
+        eval "$(zoxide init bash)"
+        alias j='z' # Добавляем привычный псевдоним от autojump
+    elif command_exists "autojump"; then
+        local autojump_file="/usr/share/autojump/autojump.sh"
+        if [ -f "$autojump_file" ]; then
+            # shellcheck source=/dev/null
+            source "$autojump_file"
+        fi
+    fi
+}
+
+# --- Плагин cht.sh (шпаргалки) ---
+# Показывает шпаргалки для команд.
+# Пример: cht tar, cht python zip list
+cht() {
+    if ! command_exists "curl"; then
+        echo "Ошибка: 'curl' не найден." >&2
+        return 1
+    fi
+    local query
+    query=$(echo "$@" | tr ' ' '+')
+    curl -s "https://cht.sh/${query}" | less -R
+}
+
