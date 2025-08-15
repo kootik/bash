@@ -1820,4 +1820,71 @@ explain() {
     curl -Gs "https://www.explainshell.com/explain?cmd=$cmd" --compressed | sed 's/href="\/explain/href="https:\/\/www.explainshell.com\/explain/g' | w3m -T text/html
 }
 
+#   РАЗДЕЛ 17: ДОПОЛНИТЕЛЬНЫЕ ИНТЕГРИРОВАННЫЕ ПЛАГИНЫ
+# ==============================================================================
 
+# --- Плагин todo (Менеджер задач) ---
+# Файл для хранения задач
+export TODO_FILE="$HOME/.todo.txt"
+# Файл для выполненных задач
+export DONE_FILE="$HOME/.todo.txt.done"
+
+# Добавляет новую задачу в список.
+# Пример: todo "Написать отчет"
+todo() {
+    if [ $# -eq 0 ]; then
+        echo "Использование: todo <текст задачи>" >&2
+        return 1
+    fi
+    echo "$*" >> "$TODO_FILE"
+    echo "Задача добавлена."
+}
+
+# Показывает список активных задач.
+todos() {
+    if [ ! -f "$TODO_FILE" ] || ! [ -s "$TODO_FILE" ]; then
+        echo "Нет активных задач. Отличная работа!"
+        return
+    fi
+    echo -e "\n\e[1;34m--- АКТИВНЫЕ ЗАДАЧИ ---\e[0m"
+    # Нумеруем строки, добавляем отступ
+    nl -w2 -s'. ' "$TODO_FILE" | sed 's/^/  /'
+    echo ""
+}
+
+# Отмечает задачу как выполненную по ее номеру.
+# Пример: done 2
+done() {
+    if [ ! -f "$TODO_FILE" ] || ! [ -s "$TODO_FILE" ]; then
+        echo "Нет задач для выполнения."
+        return 0
+    fi
+    if [ $# -eq 0 ]; then
+        todos
+        echo "Использование: done <номер_задачи>" >&2
+        return 1
+    fi
+    local line
+    line=$(sed -n "${1}p" "$TODO_FILE")
+    if [ -z "$line" ]; then
+        echo "Ошибка: задачи с номером $1 не существует." >&2
+        return 1
+    fi
+    sed -i.bak "${1}d" "$TODO_FILE"
+    # Добавляем дату выполнения
+    echo "[$(date '+%Y-%m-%d')] $line" >> "$DONE_FILE"
+    echo "Задача '$line' выполнена!"
+    # Удаляем пустой .bak файл
+    rm -f "${TODO_FILE}.bak"
+}
+
+# --- Фильтр для less (less-pretty-cat) ---
+# Эта функция вызывается less для подсветки синтаксиса.
+_lessfilter() {
+    if command_exists "pygmentize"; then
+        pygmentize -g "$1"
+    else
+        # Если pygmentize не найден, просто выводим файл как есть.
+        cat "$1"
+    fi
+}
