@@ -1853,8 +1853,8 @@ todos() {
 }
 
 # Отмечает задачу как выполненную по ее номеру.
-# Пример: done 2
-done() {
+# Пример: task_done 2
+task_done() {
     if [ ! -f "$TODO_FILE" ] || ! [ -s "$TODO_FILE" ]; then
         echo "Нет задач для выполнения."
         return 0
