@@ -1802,3 +1802,22 @@ cht() {
     curl -s "https://cht.sh/${query}" | less -R
 }
 
+# --- Плагин explain (объяснение команд) ---
+# Отправляет команду на explainshell.com для получения подробного объяснения.
+# Пример: explain ls -lart
+explain() {
+    if [ "$#" -eq 0 ]; then
+        echo "Использование: explain <команда>"
+        return 1
+    fi
+    if ! command_exists "curl"; then
+        echo "Ошибка: 'curl' не найден." >&2
+        return 1
+    fi
+    local cmd
+    cmd=$(printf "%s+" "$@")
+    cmd=${cmd%+}
+    curl -Gs "https://www.explainshell.com/explain?cmd=$cmd" --compressed | sed 's/href="\/explain/href="https:\/\/www.explainshell.com\/explain/g' | w3m -T text/html
+}
+
+
