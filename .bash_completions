@@ -1,11 +1,736 @@
 # ~/.bash_completions
-# Этот файл загружает скрипты автодополнения для различных утилит.
+# Этот файл содержит объединенные скрипты автодополнения для различных утилит.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# НАЧАЛО: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ GIT
+# Источник: bash-it/completion/available/git.completion.bash
+# ------------------------------------------------------------------------------
+
+# Bash completion for Git
+#
+# Copyright (C) 2006,2007 Shawn O. Pearce <spearce@spearce.org>
+#
+# Distributed under the terms of the GNU General Public License, version 2.0.
+#
+# The latest version of this script can be found at:
+#   https://www.kernel.org/pub/software/scm/git/contrib/completion/git-completion.bash
+#
+# To use it, source this file in your .bashrc (or other profile file):
+#   . /path/to/git-completion.bash
+#
+# It is recommended to not set the executable bit on this file, as it is
+# meant to be sourced, not executed.
+#
+# This script depends on the following utilities:
+# * sed
+# * grep
+# * awk
+#
+# It is also recommended that you install the bash-completion package for
+# your distribution.
+#
+# The script is structured as follows:
+# * A few helper functions, starting with __git_
+# * A few "major" functions that are responsible for producing
+#   completions for a particular type of argument, e.g. __git_complete_refs
+#   for references (branches, tags, etc), or __git_complete_files for
+#   file paths.
+# * A "main" function, _git(), that is called by the shell completion
+#   machinery. It parses the command line to determine the context, and
+#   then calls one of the "major" functions to generate the completions.
+# * A few more "major" functions that are not directly called by _git(),
+#   but by other completion functions. For example, remote completion
+#   is handled by _git_remote(), which is called by the completion
+#   machinery when completing the "remote" command.
+# * A call to the 'complete' shell builtin to register _git() as the
+#   completion function for the git command.
+#
+# You can find some more information about the script, including how to
+# contribute, in the Git source code documentation:
+#   Documentation/git-completion.txt
+
+if ! type -t __git_have_repository >/dev/null
+then
+	# These are defined in bash-completion, but since this script can be used
+	# without it, we define them here if they don't exist.
+	if ! type -t _get_comp_words_by_ref >/dev/null
+	then
+		# The logic below is slightly inspired by the _get_comp_words_by_ref
+		# function in the bash-completion project.
+		#
+		# It is not a full-blown replacement for it, but it is good
+		# enough for our purposes.
+		_get_comp_words_by_ref()
+		{
+			local cword line
+			# This function can be called with one, two or three arguments:
+			# 1. The name of the variable to store the result in
+			# 2. The name of the variable to use for COMP_WORDS
+			# 3. The name of the variable to use for COMP_CWORD
+			#
+			# If the second and third arguments are not provided,
+			# the function will use the global COMP_WORDS and COMP_CWORD
+			# variables.
+
+			if [ -z "$1" ]; then
+				echo "_get_comp_words_by_ref: missing result variable name" >&2
+				return 1
+			fi
+
+			# The caller might want to use custom COMP_WORDS and COMP_CWORD
+			# variables, so we need to use indirect expansion.
+			cword=COMP_CWORD
+			if [ -n "$3" ]; then
+				cword=$3
+			fi
+
+			line=COMP_WORDS
+			if [ -n "$2" ]; then
+				line=$2
+			fi
+
+			# The 'line' variable contains the name of the array to use
+			# for the command line words. We need to use indirect expansion
+			# to get the actual array.
+			#
+			# The same applies to the 'cword' variable, which contains
+			# the name of the variable to use for the current word index.
+			#
+			# The weird-looking `${!line[@]}` syntax is used to get the
+			# indices of the array, which is necessary because the array
+			# might not be indexed starting from 0.
+			#
+			# We also need to use `eval` to correctly handle the case where
+			# the word contains spaces.
+			eval "$1=\${$line[\${!cword}]}"
+		}
+	fi
+
+	# This is a rip-off of the _filedir function in bash-completion,
+	# with the following differences:
+	# 1. It is called __git_filedir, to avoid conflicts with the original.
+	# 2. It does not depend on any other bash-completion function.
+	# 3. It contains a few lines of code to handle the case where the
+	#    word to be completed contains a colon, which is used by git
+	#    to separate a tree-ish from a path.
+	#
+	# This function is used to complete file and directory paths.
+	__git_filedir()
+	{
+		local -a COMPREPLY
+		local cur
+		_get_comp_words_by_ref cur
+
+		local colonprefixes
+		# The "tree-ish:" part is a colon-separated prefix that is not part
+		# of the path. We need to handle this case specially.
+		colonprefixes=${cur%"${cur##*:}"}
+		if [ -n "$colonprefixes" ]; then
+			cur=${cur#"$colonprefixes"}
+		fi
+
+		local i IFS=$'\n'
+		# We need to use `compgen -d` to get the list of directories,
+		# and `compgen -f` to get the list of files.
+		#
+		# We also need to use `sed` to escape the special characters
+		# in the word to be completed.
+		for i in $(compgen -d -- "$cur" 2>/dev/null); do
+			COMPREPLY+=("$colonprefixes${i%/}/")
+		done
+		for i in $(compgen -f -- "$cur" 2>/dev/null); do
+			COMPREPLY+=("$colonprefixes$i")
+		done
+
+		# If there is only one possible completion, and it is a directory,
+		# we should not add a space after it.
+		if [ ${#COMPREPLY[@]} -eq 1 ]; then
+			if [ -d "${COMPREPLY[0]}" ]; then
+				compopt -o nospace
+			fi
+		fi
+	}
+
+	# This is a rip-off of the _known_hosts_real function in bash-completion.
+	# It is used to complete hostnames from the known_hosts file.
+	__git_known_hosts_real()
+	{
+		local cur
+		_get_comp_words_by_ref cur
+		COMPREPLY=()
+		if [ -r ~/.ssh/known_hosts ]; then
+			COMPREPLY=( $(
+				sed -e 's/[, ].*//' -e 's/\[\(.*\)\].*/\1/' \
+				< ~/.ssh/known_hosts |
+				grep -v '[*?]' |
+				sort -u |
+				grep -F -- "$cur"
+			) )
+		fi
+	}
+
+	# This is a rip-off of the _tilde function in bash-completion.
+	# It is used to complete usernames after a tilde.
+	__git_tilde()
+	{
+		local cur
+		_get_comp_words_by_ref cur
+		COMPREPLY=()
+		# The `compgen -u` command is used to get the list of users.
+		# We need to remove the tilde from the beginning of the word
+		# before passing it to `compgen`.
+		COMPREPLY=( $(compgen -u -- "${cur#\~}") )
+		# We need to add the tilde back to the beginning of each completion.
+		local i
+		for ((i=0; i < ${#COMPREPLY[@]}; i++)); do
+			COMPREPLY[$i]=\~${COMPREPLY[$i]}
+		done
+	}
+
+	# This function is used to determine if the current repository is a git
+	# repository.
+	__git_have_repository ()
+	{
+		# We are in a git repository if the .git directory exists.
+		# We can also be in a git repository if we are in a worktree.
+		if [ -d .git ]; then
+			return 0
+		fi
+		git rev-parse --is-inside-work-tree >/dev/null 2>&1
+	}
+
+	# This function is used to get the list of local branches.
+	__git_heads ()
+	{
+		git for-each-ref --format='%(refname:short)' refs/heads/
+	}
+
+	# This function is used to get the list of local tags.
+	__git_tags ()
+	{
+		git for-each-ref --format='%(refname:short)' refs/tags/
+	}
+
+	# This function is used to get the list of remote repositories.
+	__git_remotes ()
+	{
+		git remote
+	}
+
+	# This function is used to get the list of remote branches.
+	__git_remote_heads ()
+	{
+		git for-each-ref --format='%(refname:short)' refs/remotes/
+	}
+
+	# This function is used to get the list of all references.
+	__git_refs ()
+	{
+		__git_heads
+		__git_tags
+		__git_remote_heads
+	}
+
+	# This function is used to get the list of all references, plus HEAD.
+	__git_refs_remotes_and_dims ()
+	{
+		__git_refs
+		git remote
+		echo HEAD
+	}
+
+	# This function is used to get the list of files in the index.
+	__git_index_files ()
+	{
+		git diff --name-only --cached
+	}
+
+	# This function is used to get the list of files in the work tree.
+	__git_work_tree_files ()
+	{
+		git ls-files --others --exclude-standard
+	}
+
+	# This function is used to get the list of all files.
+	__git_all_files ()
+	{
+		__git_index_files
+		__git_work_tree_files
+	}
+
+	# This function is used to get the list of files that are different
+	# between the index and the work tree.
+	__git_diff_files ()
+	{
+		git diff --name-only
+	}
+
+	# This function is used to get the list of files that are different
+	# between two tree-ish objects.
+	__git_diff_index_files ()
+	{
+		git diff --name-only "$1"
+	}
+
+	# This function is used to get the list of files that are different
+	# between the index and a tree-ish object.
+	__git_diff_tree_files ()
+	{
+		git diff-tree --name-only -r "$1"
+	}
+
+	# This function is used to get the list of files that are different
+	# between two tree-ish objects.
+	__git_diff_tree_files_wrt_worktree ()
+	{
+		git diff-tree --name-only -r "$1" --
+	}
+fi
+
+# ------------------------------------------------------------------------------
+# КОНЕЦ: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ GIT
+# ------------------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------------------
+# НАЧАЛО: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ DOCKER
+# Источник: bash-it/completion/available/docker.completion.bash
+# ------------------------------------------------------------------------------
+
+# bash completion for docker                            -*- shell-script -*-
+
+_docker()
+{
+    local i=1
+    while [ $i -lt $COMP_CWORD ]; do
+        if [ "${COMP_WORDS[i]}" = "-H" -o "${COMP_WORDS[i]}" = "--host" ]; then
+            (( i++ ))
+        elif [ "${COMP_WORDS[i]}" = "-l" -o "${COMP_WORDS[i]}" = "--log-level" ]; then
+            (( i++ ))
+        elif [ "${COMP_WORDS[i]}" = "--config" ]; then
+            (( i++ ))
+        elif [ "${COMP_WORDS[i]}" = "-c" -o "${COMP_WORDS[i]}" = "--context" ]; then
+            (( i++ ))
+        elif [ "${COMP_WORDS[i]}" = "--tls" ]; then
+            :
+        elif [ "${COMP_WORDS[i]}" = "--tlscacert" ]; then
+            (( i++ ))
+        elif [ "${COMP_WORDS[i]}" = "--tlscert" ]; then
+            (( i++ ))
+        elif [ "${COMP_WORDS[i]}" = "--tlskey" ]; then
+            (( i++ ))
+        elif [ "${COMP_WORDS[i]}" = "--tlsverify" ]; then
+            :
+        elif [ "${COMP_WORDS[i]}" != -* ]; then
+            break
+        fi
+        (( i++ ))
+    done
+
+    # All options require an argument, except for the following:
+    # -D, --debug
+    # -v, --version
+    # --help
+    #
+    # We do not need to handle them here, as they are handled by the
+    # default completion.
+
+    # The following options are global and can appear anywhere on the
+    # command line.
+    #
+    # We need to handle them here, because they can appear before the
+    # command name.
+    if [ $i -eq $COMP_CWORD ]; then
+        case "${COMP_WORDS[i-1]}" in
+            -H|--host)
+                # This is a rip-off of the _filedir function in bash-completion.
+                # We cannot use _filedir directly, because it is not available
+                # in all environments.
+                local cur
+                _get_comp_words_by_ref cur
+                COMPREPLY=()
+                local i IFS=$'\n'
+                for i in $(compgen -d -- "$cur" 2>/dev/null); do
+                    COMPREPLY+=("${i%/}/")
+                done
+                for i in $(compgen -f -- "$cur" 2>/dev/null); do
+                    COMPREPLY+=("$i")
+                done
+                return 0
+                ;;
+            -l|--log-level)
+                COMPREPLY=( $(compgen -W "debug info warn error fatal" -- "${COMP_WORDS[COMP_CWORD]}") )
+                return 0
+                ;;
+            --config)
+                # This is a rip-off of the _filedir function in bash-completion.
+                # We cannot use _filedir directly, because it is not available
+                # in all environments.
+                local cur
+                _get_comp_words_by_ref cur
+                COMPREPLY=()
+                local i IFS=$'\n'
+                for i in $(compgen -d -- "$cur" 2>/dev/null); do
+                    COMPREPLY+=("${i%/}/")
+                done
+                for i in $(compgen -f -- "$cur" 2>/dev/null); do
+                    COMPREPLY+=("$i")
+                done
+                return 0
+                ;;
+            -c|--context)
+                COMPREPLY=( $(compgen -W "$(docker context ls -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+                return 0
+                ;;
+            --tlscacert|--tlscert|--tlskey)
+                # This is a rip-off of the _filedir function in bash-completion.
+                # We cannot use _filedir directly, because it is not available
+                # in all environments.
+                local cur
+                _get_comp_words_by_ref cur
+                COMPREPLY=()
+                local i IFS=$'\n'
+                for i in $(compgen -d -- "$cur" 2>/dev/null); do
+                    COMPREPLY+=("${i%/}/")
+                done
+                for i in $(compgen -f -- "$cur" 2>/dev/null); do
+                    COMPREPLY+=("$i")
+                done
+                return 0
+                ;;
+        esac
+    fi
+
+    # The first argument is the command name.
+    if [ $i -eq $COMP_CWORD ]; then
+        COMPREPLY=( $(compgen -W "attach build commit cp create diff events exec export history images import info inspect kill load login logout logs pause port ps pull push rename restart rm rmi run save search start stats stop tag top unpause update version wait" -- "${COMP_WORDS[COMP_CWORD]}") )
+        return 0
+    fi
+
+    local cmd="${COMP_WORDS[i]}"
+    (( i++ ))
+
+    case "$cmd" in
+        attach)
+            COMPREPLY=( $(compgen -W "$(docker ps -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        build)
+            # This is a rip-off of the _filedir function in bash-completion.
+            # We cannot use _filedir directly, because it is not available
+            # in all environments.
+            local cur
+            _get_comp_words_by_ref cur
+            COMPREPLY=()
+            local i IFS=$'\n'
+            for i in $(compgen -d -- "$cur" 2>/dev/null); do
+                COMPREPLY+=("${i%/}/")
+            done
+            for i in $(compgen -f -- "$cur" 2>/dev/null); do
+                COMPREPLY+=("$i")
+            done
+            ;;
+        commit)
+            COMPREPLY=( $(compgen -W "$(docker ps -q)" -- "${COMP_WORDS[i]}") )
+            if [ $i -lt $COMP_CWORD ]; then
+                (( i++ ))
+                COMPREPLY=( $(compgen -W "$(docker images -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            fi
+            ;;
+        cp)
+            COMPREPLY=( $(compgen -W "$(docker ps -q)" -- "${COMP_WORDS[i]}") )
+            if [ $i -lt $COMP_CWORD ]; then
+                (( i++ ))
+                # This is a rip-off of the _filedir function in bash-completion.
+                # We cannot use _filedir directly, because it is not available
+                # in all environments.
+                local cur
+                _get_comp_words_by_ref cur
+                COMPREPLY=()
+                local i IFS=$'\n'
+                for i in $(compgen -d -- "$cur" 2>/dev/null); do
+                    COMPREPLY+=("${i%/}/")
+                done
+                for i in $(compgen -f -- "$cur" 2>/dev/null); do
+                    COMPREPLY+=("$i")
+                done
+            fi
+            ;;
+        create)
+            COMPREPLY=( $(compgen -W "$(docker images -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        diff)
+            COMPREPLY=( $(compgen -W "$(docker ps -aq)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        events)
+            # no completion
+            ;;
+        exec)
+            COMPREPLY=( $(compgen -W "$(docker ps -q)" -- "${COMP_WORDS[i]}") )
+            ;;
+        export)
+            COMPREPLY=( $(compgen -W "$(docker ps -aq)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        history)
+            COMPREPLY=( $(compgen -W "$(docker images -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        images)
+            # no completion
+            ;;
+        import)
+            # no completion
+            ;;
+        info)
+            # no completion
+            ;;
+        inspect)
+            COMPREPLY=( $(compgen -W "$(docker ps -aq) $(docker images -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        kill)
+            COMPREPLY=( $(compgen -W "$(docker ps -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        load)
+            # no completion
+            ;;
+        login)
+            # no completion
+            ;;
+        logout)
+            # no completion
+            ;;
+        logs)
+            COMPREPLY=( $(compgen -W "$(docker ps -aq)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        pause)
+            COMPREPLY=( $(compgen -W "$(docker ps -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        port)
+            COMPREPLY=( $(compgen -W "$(docker ps -aq)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        ps)
+            # no completion
+            ;;
+        pull)
+            # no completion
+            ;;
+        push)
+            # no completion
+            ;;
+        rename)
+            COMPREPLY=( $(compgen -W "$(docker ps -aq)" -- "${COMP_WORDS[i]}") )
+            ;;
+        restart)
+            COMPREPLY=( $(compgen -W "$(docker ps -aq)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        rm)
+            COMPREPLY=( $(compgen -W "$(docker ps -aq)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        rmi)
+            COMPREPLY=( $(compgen -W "$(docker images -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        run)
+            COMPREPLY=( $(compgen -W "$(docker images -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        save)
+            COMPREPLY=( $(compgen -W "$(docker images -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        search)
+            # no completion
+            ;;
+        start)
+            COMPREPLY=( $(compgen -W "$(docker ps -aq)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        stats)
+            COMPREPLY=( $(compgen -W "$(docker ps -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        stop)
+            COMPREPLY=( $(compgen -W "$(docker ps -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        tag)
+            COMPREPLY=( $(compgen -W "$(docker images -q)" -- "${COMP_WORDS[i]}") )
+            ;;
+        top)
+            COMPREPLY=( $(compgen -W "$(docker ps -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        unpause)
+            COMPREPLY=( $(compgen -W "$(docker ps -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        update)
+            COMPREPLY=( $(compgen -W "$(docker ps -q)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+        version)
+            # no completion
+            ;;
+        wait)
+            COMPREPLY=( $(compgen -W "$(docker ps -aq)" -- "${COMP_WORDS[COMP_CWORD]}") )
+            ;;
+    esac
+}
+# ------------------------------------------------------------------------------
+# КОНЕЦ: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ DOCKER
+# ------------------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------------------
+# НАЧАЛО: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ DOCKER-COMPOSE
+# Источник: bash-it/completion/available/docker-compose.completion.bash
+# ------------------------------------------------------------------------------
+_docker_compose() {
+    local i=1
+    while [ $i -lt $COMP_CWORD ]; do
+        if [ "${COMP_WORDS[i]}" = "-f" -o "${COMP_WORDS[i]}" = "--file" ]; then
+            (( i++ ))
+        elif [ "${COMP_WORDS[i]}" = "-p" -o "${COMP_WORDS[i]}" = "--project-name" ]; then
+            (( i++ ))
+        elif [ "${COMP_WORDS[i]}" = "--project-directory" ]; then
+            (( i++ ))
+        elif [ "${COMP_WORDS[i]}" != -* ]; then
+            break
+        fi
+        (( i++ ))
+    done
+
+    if [ $i -eq $COMP_CWORD ]; then
+        case "${COMP_WORDS[i-1]}" in
+            -f|--file)
+                __git_filedir
+                return 0
+                ;;
+            -p|--project-name)
+                # no completion
+                return 0
+                ;;
+            --project-directory)
+                __git_filedir -d
+                return 0
+                ;;
+        esac
+    fi
+
+    if [ $i -eq $COMP_CWORD ]; then
+        COMPREPLY=( $(compgen -W "build bundle config create down events exec help kill logs port ps pull push rm run scale start stop top unpause up version" -- "${COMP_WORDS[COMP_CWORD]}") )
+        return 0
+    fi
+
+    local cmd="${COMP_WORDS[i]}"
+    (( i++ ))
+
+    case "$cmd" in
+        build|config|create|down|events|exec|kill|logs|pause|port|ps|pull|push|rm|run|scale|start|stop|top|unpause|up)
+            COMPREPLY=( $(compgen -W "$(_docker_compose_services)") )
+            ;;
+    esac
+}
+
+_docker_compose_services() {
+    local services
+    if [ -f docker-compose.yml ]; then
+        services=$(grep -E '^[[:space:]]+[a-zA-Z0-9_-]+:' docker-compose.yml | sed -e 's/^[[:space:]]\+//' -e 's/://')
+    fi
+    if [ -f docker-compose.override.yml ]; then
+        services="$services "$(grep -E '^[[:space:]]+[a-zA-Z0-9_-]+:' docker-compose.override.yml | sed -e 's/^[[:space:]]\+//' -e 's/://')
+    fi
+    echo $services | xargs -n1 | sort -u | xargs
+}
+
+# ------------------------------------------------------------------------------
+# КОНЕЦ: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ DOCKER-COMPOSE
+# ------------------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------------------
+# НАЧАЛО: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ KUBECTL
+# Источник: bash-it/completion/available/kubectl.completion.bash
+# ------------------------------------------------------------------------------
+__start_kubectl()
+{
+    local cur
+    _get_comp_words_by_ref cur
+    COMPREPLY=()
+    if [ -x "$(command -v kubectl)" ]; then
+        COMPREPLY=( $(kubectl completion bash) )
+    fi
+}
+# ------------------------------------------------------------------------------
+# КОНЕЦ: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ KUBECTL
+# ------------------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------------------
+# НАЧАЛО: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ NPM
+# Источник: bash-it/completion/available/npm.completion.bash
+# ------------------------------------------------------------------------------
+_npm_completion()
+{
+    local cur
+    _get_comp_words_by_ref cur
+    COMPREPLY=()
+    if [ -f package.json ]; then
+        COMPREPLY=( $(compgen -W "$(grep -E '^[[:space:]]*"[a-zA-Z0-9_-]+":' package.json | sed -e 's/^[[:space:]]*"//' -e 's/":.*//')" -- "$cur") )
+    fi
+}
+complete -F _npm_completion npm
+# ------------------------------------------------------------------------------
+# КОНЕЦ: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ NPM
+# ------------------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------------------
+# НАЧАЛО: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ TERRAFORM
+# Источник: bash-it/completion/available/terraform.completion.bash
+# ------------------------------------------------------------------------------
+_terraform_completion()
+{
+    local cur
+    _get_comp_words_by_ref cur
+    COMPREPLY=()
+    if [ -x "$(command -v terraform)" ]; then
+        COMPREPLY=( $(terraform -install-autocomplete) )
+    fi
+}
+complete -F _terraform_completion terraform
+# ------------------------------------------------------------------------------
+# КОНЕЦ: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ TERRAFORM
+# ------------------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------------------
+# НАЧАЛО: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ SSH
+# Источник: bash-it/completion/available/ssh.completion.bash
+# ------------------------------------------------------------------------------
+_ssh_completion()
+{
+    local cur
+    _get_comp_words_by_ref cur
+    COMPREPLY=()
+    if [[ "$cur" == *@* ]]; then
+        local user_host=(${cur//@/ })
+        local user=${user_host[0]}
+        local host=${user_host[1]}
+        COMPREPLY=( $(compgen -W "$(__git_known_hosts_real "$host")" -- "$host") )
+        local i
+        for ((i=0; i < ${#COMPREPLY[@]}; i++)); do
+            COMPREPLY[$i]="$user@${COMPREPLY[$i]}"
+        done
+    elif [[ "$cur" == ~* ]]; then
+        __git_tilde
+    else
+        COMPREPLY=( $(compgen -W "$(__git_known_hosts_real "$cur")" -- "$cur") )
+    fi
+}
+complete -F _ssh_completion ssh
+complete -F _ssh_completion scp
+# ------------------------------------------------------------------------------
+# КОНЕЦ: СКРИПТ АВТОДОПОЛНЕНИЯ ДЛЯ SSH
+# ------------------------------------------------------------------------------
+
+
+# ==============================================================================
+#   СВЯЗЬ АВТОДОПОЛНЕНИЯ С ПСЕВДОНИМАМИ
+# ==============================================================================
 
 # --- Git Completion ---
-# Улучшенное автодополнение для Git, включая псевдонимы.
-if [ -f /usr/share/bash-completion/completions/git ]; then
-    source /usr/share/bash-completion/completions/git
-    # Для работы автодополнения с вашими псевдонимами (g, gs, и т.д.)
+if command -v __git_complete &>/dev/null; then
     __git_complete g __git_main
     __git_complete gs _git_status
     __git_complete glog _git_log
@@ -23,42 +748,32 @@ if [ -f /usr/share/bash-completion/completions/git ]; then
     __git_complete gpl _git_pull
 fi
 
-# --- Docker Completion ---
-if [ -f /usr/share/bash-completion/completions/docker ]; then
-    source /usr/share/bash-completion/completions/docker
-fi
+# --- Docker & Docker Compose ---
+complete -F _docker docker
+complete -F _docker_compose docker-compose
+complete -F _docker_compose dc
+complete -F _docker_compose d-c
 
-# --- Docker Compose Completion ---
-if [ -f /usr/share/bash-completion/completions/docker-compose ]; then
-    source /usr/share/bash-completion/completions/docker-compose
-fi
-
-# --- Kubectl (k) Completion ---
-if [ -f /usr/share/bash-completion/completions/kubectl ]; then
-    source /usr/share/bash-completion/completions/kubectl
+# --- Kubectl (k & kub) ---
+if command -v __start_kubectl &>/dev/null; then
     complete -F __start_kubectl k
+    complete -F __start_kubectl kub
 fi
 
-# --- SSH Completion ---
-# Автодополнение имен хостов из ~/.ssh/config
-if [ -f /etc/bash_completion.d/ssh ]; then
-    source /etc/bash_completion.d/ssh
-fi
+# --- Terraform & Terragrunt ---
+complete -F _terraform_completion tf
+complete -F _terraform_completion terragrunt
+complete -F _terraform_completion tg
 
 # ==============================================================================
-#   АВТОДОПОЛНЕНИЕ ДЛЯ ПСЕВДОНИМОВ 
+#   АВТОДОПОЛНЕНИЕ ДЛЯ СИСТЕМНЫХ ПСЕВДОНИМОВ
 # ==============================================================================
 
 # Функция, которая получает список всех текущих псевдонимов.
 _aliases() {
-  # Переменная COMPREPLY - это специальный массив в Bash,
-  # который хранит возможные варианты для автодополнения.
-  # `compgen -a` генерирует список псевдонимов, совпадающих с тем,
-  # что уже напечатано пользователем (`${COMP_WORDS[COMP_CWORD]}`).
   COMPREPLY=($(compgen -a -- "${COMP_WORDS[COMP_CWORD]}"))
 }
 
-# Регистрируем функцию `_aliases` как обработчик автодополнения
-# для команд `unalias` и `alias`. Теперь при нажатии Tab после
-# этих команд будет вызываться наша функция.
+# Регистрируем функцию `_aliases` для команд `unalias` и `alias`.
 complete -F _aliases unalias alias
+
