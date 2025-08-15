@@ -277,8 +277,14 @@ if ! shopt -oq posix; then
   fi
 fi
 
-# --- Интеграция плагина history-substring-search ---
-# Поиск по истории по подстроке стрелками вверх/вниз
+# --- 6. Активация плагинов и хуков ПОСЛЕ загрузки всех функций ---
+
+# Активация подсветки синтаксиса для less
+if command_exists "pygmentize"; then
+    export LESSOPEN='| _lessfilter %s'
+fi
+
+# Интеграция плагина history-substring-search
 bind '"\e[A": history-search-backward'
 bind '"\e[B": history-search-forward'
 
