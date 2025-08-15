@@ -59,3 +59,20 @@ if [ -f ~/.ssh/id_ed25519 ] && [ -f ~/.ssh/id_ed25519.pub ]; then
     # Добавляем ключ, только если он еще не добавлен.
     ssh-add -l | grep -q "$(cut -f1,2 -d' ' ~/.ssh/id_ed25519.pub)" || ssh-add ~/.ssh/id_ed25519
 fi
+# --- Настройки плагина less-pretty-cat ---
+# Включает подсветку синтаксиса для less через функцию _lessfilter
+# Требует: pip install Pygments
+if command_exists "pygmentize"; then
+    export LESSOPEN='| _lessfilter %s'
+fi
+export LESS=" -R"
+
+# --- Настройки плагина man (цветные man-страницы) ---
+# Делает man страницы более читаемыми с помощью цветов
+export LESS_TERMCAP_mb=$'\e[1;31m'  # начало мигания
+export LESS_TERMCAP_md=$'\e[1;32m'  # начало жирного
+export LESS_TERMCAP_me=$'\e[0m'     # конец всех атрибутов
+export LESS_TERMCAP_se=$'\e[0m'     # конец standout
+export LESS_TERMCAP_so=$'\e[01;33m' # начало standout
+export LESS_TERMCAP_ue=$'\e[0m'     # конец подчеркивания
+export LESS_TERMCAP_us=$'\e[04;36m' # начало подчеркивания
