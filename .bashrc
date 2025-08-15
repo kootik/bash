@@ -245,12 +245,12 @@ if [[ -n "${SSHB_SESSION:-}" ]]; then
     # --- ЭТО УДАЛЕННАЯ СЕССИЯ SSHB ---
     export SHELL="$HOME/.$USER.bash-ssh"
     trap _manage_local_history EXIT
-    PROMPT_COMMAND="precmd; _manage_local_history; _remote_send_history"
+    PROMPT_COMMAND="_manage_local_history; _remote_send_history"
     [[ "${BASH_SOURCE[0]}" == "${0}" ]] && exec bash --rcfile "$SHELL" "$@"
 else
     # --- ЭТО ЛОКАЛЬНАЯ СЕССИЯ ---
     trap _manage_local_history EXIT
-    PROMPT_COMMAND="precmd; _manage_local_history; update_eternal_history"
+    PROMPT_COMMAND="_manage_local_history; update_eternal_history"
 fi
 
 # --- Загрузка конфигурационных файлов ---
@@ -293,15 +293,8 @@ bind '"\e[B": history-search-forward'
 setup_os_aliases
 load_pyenv_plugin
 load_rbenv_plugin
-load_direnv_plugin
-load_smart_nav_plugin
-
-# Установка PROMPT_COMMAND для выполнения функций перед каждой командой
-PROMPT_COMMAND="precmd"
-
-# --- 7. Активация хука для измерения времени выполнения команд ---
-# Эта строка должна быть ОДНОЙ ИЗ ПОСЛЕДНИХ, чтобы все функции были загружены.
-trap 'preexec' DEBUG
+load_direnv_plugin      # <-- НОВАЯ СТРОКА
+load_smart_nav_plugin   # <-- НОВАЯ СТРОКА
 
 # --- Финальное сообщение о загрузке ---
 if [[ -n "${SSHB_SESSION:-}" ]]; then
