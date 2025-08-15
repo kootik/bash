@@ -1585,45 +1585,7 @@ bsearch() {
     fi
 }
 
-#   РАЗДЕЛ 13: ИЗМЕРЕНИЕ ВРЕМЕНИ ВЫПОЛНЕНИЯ КОМАНД
-# --- Механизм preexec ---
-preexec() {
-    [ -n "$COMP_LINE" ] && return
-    [ "$BASH_COMMAND" = "$PROMPT_COMMAND" ] && return
-    local preexec_function
-    for preexec_function in "${preexec_functions[@]}"; do
-        "$preexec_function"
-    done
-}
 
-precmd() {
-    local precmd_function
-    for precmd_function in "${precmd_functions[@]}"; do
-        "$precmd_function"
-    done
-}
-
-preexec_functions+=(bash_it_command_duration_start)
-precmd_functions+=(bash_it_command_duration_stop)
-trap 'preexec' DEBUG
-
-export BASH_IT_CMD_DURATION_THRESHOLD=5
-bash_it_command_duration_start() {
-    __bash_it_command_start_time=$(date +%s.%N)
-}
-
-bash_it_command_duration_stop() {
-    local end_time
-    end_time=$(date +%s.%N)
-    local start_time=${__bash_it_command_start_time:-0}
-    local duration
-    duration=$(echo "$end_time - $start_time" | bc -l)
-    if (( $(echo "$duration > $BASH_IT_CMD_DURATION_THRESHOLD" | bc -l) )); then
-        local formatted_duration
-        formatted_duration=$(echo "scale=2; $duration / 1" | bc -l)
-        echo -e "\n\e[90m(выполнено за ${formatted_duration}s)\e[0m"
-    fi
-}
 
 #   РАЗДЕЛ 14: SUDO ПЛАГИН
 # Повторяет последнюю команду с sudo при двойном нажатии Esc
