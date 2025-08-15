@@ -1636,3 +1636,129 @@ sudo-command-line() {
 }
 
 bind -x '"\e\e": sudo-command-line'
+
+#   РАЗДЕЛ 15: УПРАВЛЕНИЕ ОКРУЖЕНИЕМ В СТИЛЕ BASH-IT
+# Главная команда для управления и отображения информации о вашем окружении.
+# Пример: bask show aliases
+bask() {
+    # Вспомогательные функции определены внутри, чтобы не засорять глобальное пространство
+    
+    _bask_help() {
+        echo -e "\n\e[1mИспользование: bask <команда> [компонент]\e[0m"
+        echo -e "Инструмент для управления вашим окружением Bash.\n"
+        echo -e "\e[1mДоступные команды:\e[0m"
+        echo -e "  \e[32mshow\e[0m      Показать информацию о компонентах (aliases, functions, completions, all)."
+        echo -e "  \e[32mhelp\e[0m      Показать это справочное сообщение."
+        echo -e "\n\e[1mПримеры:\e[0m"
+        echo -e "  bask show aliases"
+        echo -e "  bask show all"
+    }
+
+    _bask_show_completions() {
+        local source_file="$HOME/.bash_completions"
+        if [ ! -f "$source_file" ]; then
+            echo "Файл автодополнений не найден: $source_file" >&2
+            return 1
+        fi
+
+        echo -e "\n\e[1;32mКОМПОНЕНТЫ АВТОДОПОЛНЕНИЯ\e[0m"
+        echo -e "Найдено в файле: \e[2m$source_file\e[0m\n"
+        
+        echo -e "  \033[1;34mИнструмент\033[0m          \033[1;34mСвязан с командами/псевдонимами\033[0m"
+        echo -e "  \033[1;34m------------------  -----------------------------------\033[0m"
+        
+        # Git
+        local git_aliases
+        git_aliases=$(grep '__git_complete' "$source_file" 2>/dev/null | awk '{print $2}' | tr '\n' ' ' | sed 's/ $//')
+        printf "  \033[1;33m%-18s\033[0m  %s\n" "Git" "git, ${git_aliases}"
+
+        # Docker
+        printf "  \033[1;33m%-18s\033[0m  %s\n" "Docker" "docker"
+        
+        # Docker Compose
+        local dc_aliases
+        dc_aliases=$(grep '_docker_compose' "$source_file" 2>/dev/null | awk '{print $4}' | tr '\n' ' ' | sed 's/ $//')
+        printf "  \033[1;33m%-18s\033[0m  %s\n" "Docker Compose" "docker-compose, ${dc_aliases}"
+        
+        # Kubectl
+        local k_aliases
+        k_aliases=$(grep '__start_kubectl' "$source_file" 2>/dev/null | awk '{print $4}' | tr '\n' ' ' | sed 's/ $//')
+        printf "  \033[1;33m%-18s\033[0m  %s\n" "Kubectl" "kubectl, ${k_aliases}"
+        
+        # Terraform
+        local tf_aliases
+        tf_aliases=$(grep '_terraform_completion' "$source_file" 2>/dev/null | awk '{print $4}' | tr '\n' ' ' | sed 's/ $//')
+        printf "  \033[1;33m%-18s\033[0m  %s\n" "Terraform" "terraform, ${tf_aliases}"
+        
+        # NPM
+        printf "  \033[1;33m%-18s\033[0m  %s\n" "NPM" "npm"
+        
+        # SSH
+        printf "  \033[1;33m%-18s\033[0m  %s\n" "SSH / SCP" "ssh, scp"
+        
+        # Aliases
+        printf "  \033[1;33m%-18s\033[0m  %s\n" "Aliases" "alias, unalias"
+        echo ""
+    }
+
+    _bask_show_all() {
+        echo -e "\n\e[1;32mОБЗОР ОКРУЖЕНИЯ\e[0m"
+        
+        # Считаем псевдонимы
+        local alias_count=0
+        if [ -f "$HOME/.bash_aliases" ]; then
+            alias_count=$(grep -c '^\s*alias' "$HOME/.bash_aliases")
+        fi
+        echo -e "\n\e[1;34mПсевдонимы (aliases):\e[0m \e[1;33m$alias_count\e[0m шт."
+        echo -e "  \e[2mДля просмотра: bask show aliases\e[0m"
+
+        # Считаем функции
+        local func_count=0
+        if [ -f "$HOME/.bash_functions" ]; then
+            # Исправлено: исключаем строки, где '()' является частью комментария или строки
+            func_count=$(grep -c '^[a-zA-Z0-9_-]*()' "$HOME/.bash_functions")
+        fi
+        echo -e "\n\e[1;34mФункции (functions):\e[0m \e[1;33m$func_count\e[0m шт."
+        echo -e "  \e[2mДля просмотра: bask show functions\e[0m"
+        
+        # Показываем автодополнения
+        _bask_show_completions
+    }
+
+    _bask_show() {
+        local component="${1:-all}"
+        case "$component" in
+            aliases)
+                h-alias
+                ;;
+            functions)
+                h-func
+                ;;
+            completions)
+                _bask_show_completions
+                ;;
+            all)
+                _bask_show_all
+                ;;
+            *)
+                echo "Неизвестный компонент: '$component'. Используйте 'aliases', 'functions', 'completions' или 'all'." >&2
+                return 1
+                ;;
+        esac
+    }
+
+    local command="$1"
+    shift
+    case "$command" in
+        show)
+            _bask_show "$@"
+            ;;
+        help)
+            _bask_help
+            ;;
+        *)
+            _bask_help
+            return 1
+            ;;
+    esac
+}
