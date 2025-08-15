@@ -17,6 +17,8 @@ alias la='ls -la'               # Показывает все файлы (вкл
 alias lart='ls -alrt'           # Показывает все файлы в длинном формате, отсортированные по времени изменения в обратном порядке.
 alias lS='ls -alSrh'            # Показывает все файлы, отсортированные по размеру (от большего к меньшему) в удобном формате.
 alias lt='ls --human-readable --size -1 -S --classify' # Сортирует файлы по размеру (от большего к меньшему) и выводит в одну колонку.
+alias l.='ls -d .* --color=auto' # Показать только скрытые файлы
+alias sl='ls' # Исправление частой опечатки
 
 # -- Быстрая навигация по каталогам --
 alias ..='cd ..'                # Быстрый переход в родительский каталог.
@@ -72,7 +74,6 @@ alias pscpu='ps auxf | sort -nr -k 3 | head -10' # Выводит 10 самых 
 # -- Системная информация --
 alias unamea='uname -a'         # Выводит всю доступную информацию о системе (ядро, имя хоста, архитектура).
 # Системные журналы (journalctl)
-
 alias jnl='journalctl'          # Показать все журналы
 alias jnlf='journalctl -f'      # Следить за журналами в реальном времени (follow)
 alias jnlk='journalctl -k'      # Показать только сообщения ядра (kernel)
@@ -116,11 +117,15 @@ alias gplr='git pull --rebase'  # Загружает изменения и пр�
 alias gf='git fetch --all --prune' # Загружает все данные из удаленных репозиториев и удаляет локальные ссылки на удаленные ветки.
 alias gundo='git reset --soft HEAD~1' # Отменяет последний коммит, но сохраняет все изменения в файлах (готовы к новому коммиту).
 alias gundo-hard='git reset --hard HEAD~1' # Отменяет последний коммит, возвращая изменения в рабочую область
+alias gcl='git clone' # Клонировать репозиторий
+alias gcm='git checkout master' # Переключиться на master
+alias gcmsg='git commit -m' # Коммит с сообщением
+alias gco='git checkout' # Переключиться на ветку
+alias gpull='git pull' # Получить изменения
+alias gpush='git push' # Отправить изменения
+alias gst='git status' # Статус репозитория
 
 # -- Раздел 6: Инструментарий разработчика --
-
-# Пакетные менеджеры (раскомментируйте нужный блок)
-
 
 # # Для Alt Linux (использует apt-get и epm):
 # alias update='sudo apt-get update && sudo apt-get dist-upgrade -y' # Обновление списка пакетов и системы
@@ -129,7 +134,6 @@ alias gundo-hard='git reset --hard HEAD~1' # Отменяет последний
 # alias search='epm search'             # Поиск пакета через epm
 # alias epm-install='epm install'       # Установка пакета через epm
 # alias epm-remove='epm remove'         # Удаление пакета через epm
-
 # NPM
 alias ni='npm install'          # Устанавливает зависимости проекта (сокращение для npm install).
 alias nis='npm install --save'  # Устанавливает пакет и добавляет его в dependencies.
@@ -159,21 +163,30 @@ alias di='docker images'   # Показывает список всех обра
 alias dex='docker exec -it' # Запускает интерактивную сессию (например, bash) внутри работающего контейнера.
 
 # Docker Compose
-alias dc='docker-compose'
-alias dcu='docker-compose up -d'
-alias dcd='docker-compose down'
-alias dcr='docker-compose run --rm'
-alias dcl='docker-compose logs -f'
+alias dc='docker-compose'       # Псевдоним для docker-compose.
+alias dcu='docker-compose up -d' # Запустить сервисы в фоновом режиме.
+alias dcd='docker-compose down' # Остановить и удалить контейнеры.
+alias dcr='docker-compose run --rm' # Запустить одноразовую команду.
+alias dcl='docker-compose logs -f' # Следить за логами.
 
 # Terraform
-alias tf='terraform'
-alias tfi='terraform init'
-alias tfp='terraform plan'
-alias tfa='terraform apply'
-alias tfd='terraform destroy'
+alias tf='terraform'            # Короткий псевдоним для terraform.
+alias tfi='terraform init'      # Инициализировать проект.
+alias tfp='terraform plan'      # Создать план изменений.
+alias tfa='terraform apply'     # Применить изменения.
+alias tfd='terraform destroy'   # Уничтожить инфраструктуру.
+alias tg='terragrunt'           # Псевдоним для Terragrunt.
+alias tgv='terragrunt validate'  # Проверить инфраструктуру.
+alias tgp='terragrunt plan'      # Создать план изменений.
+alias tga='terragrunt apply'     # Применить изменения.
+alias tgd='terragrunt destroy'   # Уничтожить инфраструктуру.
+alias tgva='terragrunt validate-all' # Проверить всю инфраструктуру.
+alias tgpa='terragrunt plan-all'     # Создать план всех изменений.
+alias tgaa='terragrunt apply-all'    # Применить все изменения.
+alias tgda='terragrunt destroy-all'  # Уничтожить всю инфраструктуру.
 
 # -- Kubernetes --
-alias k='kubectl'               # Базовое сокращение для команды kubectl.
+alias kub='kubectl'               # Базовое сокращение для команды kubectl.
 alias kg='kubectl get'          # Получает информацию о ресурсах Kubernetes.
 alias kd='kubectl describe'     # Показывает подробное описание ресурса Kubernetes.
 alias ka='kubectl apply -f'     # Применяет конфигурацию из файла к кластеру.
@@ -196,6 +209,8 @@ alias bashrc='${EDITOR:-nano} ~/.bashrc'       # Открывает .bashrc дл
 alias aliases='${EDITOR:-nano} ~/.bash_aliases' # Открывает этот файл для редактирования.
 alias funcs='${EDITOR:-nano} ~/.bash_functions' # Открывает файл с функциями bash.
 alias exports='${EDITOR:-nano} ~/.bash_export' # Открывает файл с переменными окружения.
+alias edit='${EDITOR:-${ALTERNATE_EDITOR:-nano}}' # Открыть файл в $EDITOR или nano
+alias snano='sudo ${ALTERNATE_EDITOR:-nano}' # Открыть nano с правами sudo
 
 # -- Перезагрузка конфигурации и работа с sudo --
 alias reload='source ~/.bashrc && echo "Конфигурация Bash перезагружена!"' # Перезагружает конфигурацию Bash для текущей сессии.
@@ -231,17 +246,25 @@ alias rss='rsync -avh --delete --progress' # Полная синхронизац
 
 # -- Раздел 11: Системные службы и мониторинг --
 # Управление службами Systemd
-alias sc='sudo systemctl'       # Краткий алиас для systemctl
-alias scst='sudo systemctl status' # Статус службы (status)
-alias scrt='sudo systemctl restart' # Перезапуск службы (restart)
-alias scsp='sudo systemctl stop'  # Остановка службы (stop)
-alias scen='sudo systemctl enable' # Включить автозапуск службы (enable)
-alias scds='sudo systemctl disable' # Отключить автозапуск службы (disable)
-alias bootblame='systemd-analyze blame' # Показать, какие службы тормозят загрузку
+alias sc='sudo systemctl'       # Краткий псевдоним для systemctl.
+alias scst='sudo systemctl status' # Статус службы.
+alias scrt='sudo systemctl restart' # Перезапуск службы.
+alias scsp='sudo systemctl stop'  # Остановка службы.
+alias scen='sudo systemctl enable' # Включить автозапуск службы.
+alias scds='sudo systemctl disable' # Отключить автозапуск службы.
+alias sc-enable='sudo systemctl enable' # Включить автозапуск службы.
+alias sc-disable='sudo systemctl disable' # Отключить автозапуск службы.
+alias sc-start='sudo systemctl start' # Запустить службу.
+alias sc-stop='sudo systemctl stop' # Остановить службу.
+alias sc-restart='sudo systemctl restart' # Перезапустить службу.
+alias sc-status='sudo systemctl status' # Статус службы.
+alias sc-reload='sudo systemctl reload' # Перезагрузить конфигурацию службы.
+alias sc-daemon-reload='sudo systemctl daemon-reload' # Перезагрузить конфигурацию systemd.
+alias bootblame='systemd-analyze blame' # Показать, какие службы тормозят загрузку.
 alias now='date "+%Y-%m-%d %H:%M:%S"' # Текущее время в удобном формате
 
 # -- Раздел 12: Ansible --
-alias a='ansible'
+alias an='ansible'
 alias ap='ansible-playbook'
 alias ag='ansible-galaxy'
 alias av='ansible-vault'
@@ -250,3 +273,149 @@ alias av='ansible-vault'
 alias curlt='curl -I' # Показать только заголовки (headers)
 alias curll='curl -L' # Следовать редиректам
 alias curlo='curl -O' # Скачать файл, сохранив оригинальное имя
+alias curl='curl -L' # curl со следованием по редиректам по умолчанию
+# -- Bundler --
+alias bi='bundle install' # Установить гемы
+alias be='bundle exec' # Выполнить команду в контексте бандла
+alias bu='bundle update' # Обновить гемы
+alias bish='bundle install --shebang' # Установить гемы с shebang
+alias bishst='bundle install --shebang ruby-local-exec' # Установить гемы с shebang для локального ruby
+# -- Clipboard (xsel) --
+alias setclip='xsel --clipboard --input' # Скопировать в буфер обмена
+alias getclip='xsel --clipboard --output' # Вставить из буфера обмена
+# -- The Fuck --
+alias fuck='eval $(thefuck $(fc -ln -1)); history -r' # Исправить последнюю команду
+# -- General --
+alias jb='jobs -l' # Показать фоновые задачи
+alias which='type -a' # Показать все совпадения для команды
+# -- git-omz --
+alias gapa='git add --patch' # Интерактивное добавление изменений
+alias gasu='git submodule update --init --recursive' # Обновить все сабмодули
+alias gcs='git commit -S' # Подписать коммит GPG ключом
+# -- gitsvn --
+alias gsvnr='git svn rebase' # Rebase для SVN
+alias gsvnd='git svn dcommit' # Dcommit для SVN
+alias gsvnb='git svn branch' # Создать ветку в SVN
+# -- Heroku --
+alias hrun='heroku run' # Запустить команду на Heroku
+# -- Mercurial (hg) --
+alias hst='hg status' # Статус репозитория
+alias hco='hg checkout' # Переключить ветку
+alias hup='hg pull -u' # Получить и обновить
+alias hmr='hg merge' # Слить ветки
+alias hps='hg push' # Отправить изменения
+alias hpl='hg pull' # Получить изменения
+alias hcm='hg commit -m' # Сделать коммит
+
+# -- Homebrew --
+alias brewup='brew update && brew upgrade' # Обновить Homebrew и формулы
+alias brewc='brew cleanup' # Очистить старые версии
+
+# -- Homebrew Cask --
+alias cask='brew cask' # Основная команда Cask
+alias cask-list='brew cask list' # Список установленных приложений
+alias cask-search='brew cask search' # Искать приложение
+
+# -- Homesick --
+alias homesick='homesick' # Управление dotfiles через homesick
+
+# -- Jitsu --
+alias jitsu='jitsu' # Псевдоним для Jitsu
+
+# -- Laravel --
+alias art='php artisan' # Короткий псевдоним для Artisan CLI
+
+# -- Maven --
+alias mvnci='mvn clean install' # Собрать проект
+alias mvncip='mvn clean install -P production' # Собрать проект для продакшена
+alias mvnt='mvn test' # Запустить тесты
+alias mvndt='mvn dependency:tree' # Показать дерево зависимостей
+alias mvncp='mvn clean package' # Упаковать проект
+
+# -- Phoenix --
+alias mps='mix phx.server' # Запустить Phoenix сервер
+
+# -- Puppet --
+alias pa='puppet apply' # Применить манифест Puppet
+alias pag='puppet agent' # Управление агентом Puppet
+alias pc='puppet cert' # Управление сертификатами Puppet
+alias pd='puppet doc' # Показать документацию Puppet
+alias pm='puppet module' # Управление модулями Puppet
+alias pr='puppet resource' # Управление ресурсами Puppet
+alias ps='puppet apply --summarize' # Применить и показать сводку
+
+# -- PyroCMS --
+alias artisan='php artisan' # Псевдоним для Artisan в PyroCMS
+
+# -- Rails --
+alias r='bundle exec rails' # Запустить команду Rails
+alias rs='bundle exec rails server' # Запустить сервер Rails
+alias rc='bundle exec rails console' # Запустить консоль Rails
+alias rdbm='bundle exec rake db:migrate' # Выполнить миграции
+alias rdbmso='bundle exec rake db:migrate:status' # Статус миграций
+alias rdbmt='bundle exec rake db:migrate:up' # Накатить одну миграцию
+alias rdbmto='bundle exec rake db:migrate:down' # Откатить одну миграцию
+alias rdbc='bundle exec rake db:create' # Создать БД
+alias rdbd='bundle exec rake db:drop' # Удалить БД
+alias rdbf='bundle exec rake db:forward' # Продвинуть миграции
+alias rdbms='bundle exec rake db:migrate:status' # Статус миграций
+alias rdbr='bundle exec rake db:rollback' # Откатить миграцию
+alias rdbs='bundle exec rake db:seed' # Заполнить БД сидами
+alias rdbv='bundle exec rake db:version' # Версия БД
+alias rdbum='bundle exec rake db:schema:load' # Загрузить схему
+alias rdbums='bundle exec rake db:structure:load' # Загрузить структуру
+alias rdbumd='bundle exec rake db:schema:dump' # Сохранить схему
+alias rdbumds='bundle exec rake db:structure:dump' # Сохранить структуру
+alias rdbumt='bundle exec rake db:test:prepare' # Подготовить тестовую БД
+alias rt='bundle exec rake test' # Запустить все тесты
+alias rtu='bundle exec rake test:units' # Запустить юнит-тесты
+alias rtf='bundle exec rake test:functionals' # Запустить функциональные тесты
+alias rti='bundle exec rake test:integration' # Запустить интеграционные тесты
+alias rts='bundle exec rake stats' # Показать статистику кода
+alias rsd='bundle exec rspec --drb' # Запустить RSpec с DRb
+alias rsl='bundle exec rspec -l' # Запустить RSpec с указанием строки
+alias rsn='bundle exec rspec -n' # Запустить RSpec с указанием номера примера
+alias rsf='bundle exec rspec -f' # Запустить RSpec с форматом
+alias rscf='bundle exec rspec -cf' # RSpec с цветом и форматом
+alias rscfd='bundle exec rspec -cfd' # RSpec с цветом, форматом и документацией
+alias rscfp='bundle exec rspec -cfp' # RSpec с цветом, форматом и профилированием
+alias rscfps='bundle exec rspec -cfps' # RSpec с цветом, форматом, профилированием и спецификациями
+
+# -- SVN --
+alias sco='svn checkout' # Checkout из SVN
+alias sci='svn commit' # Commit в SVN
+alias sst='svn status' # Статус SVN
+alias sup='svn update' # Обновление из SVN
+alias sad='svn add' # Добавить файл в SVN
+alias srm='svn rm' # Удалить файл из SVN
+
+# -- Systemd --
+alias sc-enable='sudo systemctl enable' # Включить автозапуск службы
+alias sc-disable='sudo systemctl disable' # Отключить автозапуск службы
+alias sc-start='sudo systemctl start' # Запустить службу
+alias sc-stop='sudo systemctl stop' # Остановить службу
+alias sc-restart='sudo systemctl restart' # Перезапустить службу
+alias sc-status='sudo systemctl status' # Статус службы
+alias sc-reload='sudo systemctl reload' # Перезагрузить конфигурацию службы
+alias sc-daemon-reload='sudo systemctl daemon-reload' # Перезагрузить конфигурацию systemd
+
+# -- Tmux --
+alias ta='tmux attach -t' # Подключиться к сессии tmux
+alias tad='tmux attach -d -t' # Подключиться к сессии, отключив других клиентов
+alias ts='tmux new-session -s' # Создать новую сессию
+alias tl='tmux list-sessions' # Список сессий
+alias tk='tmux kill-session -t' # "Убить" сессию
+
+# -- uuidgen --
+alias uuid='uuidgen | tr "[:upper:]" "[:lower:]"' # Сгенерировать UUID в нижнем регистре
+
+# -- Vagrant --
+alias vup='vagrant up' # Запустить Vagrant машину
+alias vssh='vagrant ssh' # Подключиться к Vagrant машине по SSH
+alias vhalt='vagrant halt' # Остановить Vagrant машину
+alias vdestroy='vagrant destroy' # Уничтожить Vagrant машину
+alias vst='vagrant status' # Статус Vagrant машины
+alias vprov='vagrant provision' # Выполнить provision Vagrant машины
+alias vreload='vagrant reload' # Перезагрузить Vagrant машину
+alias d-c='docker-compose' # Короткий псевдоним для docker-compose
+
