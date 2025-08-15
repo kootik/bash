@@ -293,8 +293,15 @@ bind '"\e[B": history-search-forward'
 setup_os_aliases
 load_pyenv_plugin
 load_rbenv_plugin
-load_direnv_plugin      # <-- НОВАЯ СТРОКА
-load_smart_nav_plugin   # <-- НОВАЯ СТРОКА
+load_direnv_plugin
+load_smart_nav_plugin
+
+# Установка PROMPT_COMMAND для выполнения функций перед каждой командой
+PROMPT_COMMAND="precmd"
+
+# --- 7. Активация хука для измерения времени выполнения команд ---
+# Эта строка должна быть ОДНОЙ ИЗ ПОСЛЕДНИХ, чтобы все функции были загружены.
+trap 'preexec' DEBUG
 
 # --- Финальное сообщение о загрузке ---
 if [[ -n "${SSHB_SESSION:-}" ]]; then
