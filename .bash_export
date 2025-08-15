@@ -62,10 +62,8 @@ fi
 # --- Настройки плагина less-pretty-cat ---
 # Включает подсветку синтаксиса для less через функцию _lessfilter
 # Требует: pip install Pygments
-if command_exists "pygmentize"; then
-    export LESSOPEN='| _lessfilter %s'
-fi
 export LESS=" -R"
+# ПРИМЕЧАНИЕ: LESSOPEN будет установлен в .bashrc после загрузки функций
 
 # --- Настройки плагина man (цветные man-страницы) ---
 # Делает man страницы более читаемыми с помощью цветов
