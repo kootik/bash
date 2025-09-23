@@ -264,8 +264,9 @@ if [[ -r ~/.byobu/prompt ]]; then
     source ~/.byobu/prompt
     PS1=$(sed -e 's/..byobu_prompt_runtime..//' <<<"$PS1")
 else
-    # Используем новые цветовые переменные и функцию prompt_info
-    PS1='$(prompt_info)\[${BGreen}\]\u@\h\[${Reset}\]:\[${BBlue}\]\w\[${Reset}\]\$ '
+    # ИСПРАВЛЕНИЕ: Используем двойные кавычки для подстановки переменных
+    # и экранируем \` и \$ для корректной работы
+    PS1="\$(prompt_info)\[${BGreen}\]\u@\h\[${Reset}\]:\[${BBlue}\]\w\[${Reset}\]\\$ "
 fi
 
 # --- Включение стандартного bash-completion ---

@@ -1521,10 +1521,10 @@ load_rbenv_plugin() {
 prompt_info() {
     # Захватываем код выхода последней команды.
     local last_exit_code=$?
-
-    local exit_code="\[${Green}\]✔\[${Reset}\]"
-    if [ "$last_exit_code" -ne 0 ]; then
-        exit_code="\[${Red}\]✘\[${Reset}\]"
+    local exit_code="${Green}✔${Reset}"
+    if [ "$last_exit_code" -ne 0 ];
+    then
+        exit_code="${Red}✘${Reset}"
     fi
 
     local git_info=""
@@ -1533,16 +1533,17 @@ prompt_info() {
         branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
         local dirty=""
         if ! git diff --quiet --ignore-submodules HEAD 2>/dev/null; then
-            dirty=" \[${Red}\]*\[${Reset}\]"
+            dirty=" ${Red}*${Reset}"
         fi
-        git_info=" \[${Magenta}\](git:\[${Cyan}\]${branch}${dirty}\[${Magenta}\])\[${Reset}\]"
+        git_info=" ${Magenta}(git:${Cyan}${branch}${dirty}${Magenta})${Reset}"
     fi
 
     local jobs_info=""
     local job_count
     job_count=$(jobs -p 2>/dev/null | wc -l)
-    if [ "$job_count" -gt 0 ]; then
-        jobs_info=" \[${Yellow}\](jobs: ${job_count})\[${Reset}\]"
+    if (( job_count > 0 ));
+    then
+        jobs_info=" ${Yellow}(jobs: ${job_count})${Reset}"
     fi
 
     echo -e "${exit_code}${git_info}${jobs_info} "
